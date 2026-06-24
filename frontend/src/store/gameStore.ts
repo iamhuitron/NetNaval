@@ -1,23 +1,70 @@
 import { create } from 'zustand'
-import type { CellState, GamePhase } from '../types'
+import type { SessionState, Difficulty } from '../types'
+import * as wails from '../lib/wails'
 
-const BOARD_SIZE = 10
+interface GameStore {
+  session: SessionState | null
+  loading: boolean
+  error: string | null
 
-interface GameState {
-  phase: GamePhase
-  board: CellState[][]
-  setPhase: (phase: GamePhase) => void
+  newGame:     (difficulty: Difficulty) => Promise<void>
+  placeShip:   (idx: number, x: number, y: number, h: boolean) => Promise<void>
+  removeShip:  (idx: number) => Promise<void>
+  autoPlace:   () => Promise<void>
+  startBattle: () => Promise<void>
+  playerFire:  (x: number, y: number) => Promise<void>
+  reset:       () => void
+  clearError:  () => void
 }
 
-function createEmptyBoard(size: number): CellState[][] {
-  return Array.from({ length: size }, () => Array(size).fill('empty'))
+// Wrapper que limpia el error antes de cualquier llamada asíncrona
+// y actualiza `session` con el estado devuelto por Go.
+function call(
+  set: (partial: Partial<GameStore>) => void,
+  fn: () => Promise<SessionState>
+) {
+  return async () => {
+    set({ error: null })
+    try {
+      const session = await fn()
+      set({ session })
+    } catch (e) {
+      set({ error: String(e) })
+    }
+  }
 }
 
-export const useGameStore = create<GameState>((set) => ({
-  phase: 'menu',
-  board: createEmptyBoard(BOARD_SIZE),
-  setPhase: (phase) => set({ phase }),
+export const useGameStore = create<GameStore>((set) => ({
+  session: null,
+  loading: false,
+  error:   null,
 
-  // TODO (Fase 1): placeShip, fireAt, resetBoard, conectar con los
-  // bindings de Go (window.go.main.App.*) generados por `wails dev`.
+  newGame: async (difficulty) => {
+    set({ loading: true, error: null })
+    try {
+      const session = await wails.newGame(difficulty)
+      set({ session, loading: false })
+    } catch (e) {
+      set({ error: String(e), loading: false })
+    }
+  },
+
+  placeShip:   (idx, x, y, h) => call(set, () => wails.placeShip(idx, x, y, h))(),
+  removeShip:  (idx)          => call(set, () => wails.removeShip(idx))(),
+  autoPlace:   ()             => call(set, () => wails.autoPlace())(),
+
+  startBattle: async () => {
+    set({ loading: true, error: null })
+    try {
+      const session = await wails.startBattle()
+      set({ session, loading: false })
+    } catch (e) {
+      set({ error: String(e), loading: false })
+    }
+  },
+
+  playerFire: (x, y) => call(set, () => wails.playerFire(x, y))(),
+
+  reset:      () => set({ session: null, error: null }),
+  clearError: () => set({ error: null }),
 }))

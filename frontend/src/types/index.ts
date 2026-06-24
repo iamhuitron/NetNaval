@@ -1,22 +1,50 @@
+// Tipos que espejo exactamente los structs de Go
+// (game/session.go, game/types.go, chat/chat.go)
+
 export type CellState = 'empty' | 'ship' | 'hit' | 'miss' | 'sunk'
+export type GamePhase = 'placement' | 'battle' | 'gameover'
+export type Difficulty = 0 | 1   // 0 = Fácil · 1 = Medio
 
 export interface Coordinate {
   x: number
   y: number
 }
 
-export interface Ship {
-  id: string
+export interface FireResult {
+  coordinate: Coordinate
+  hit: boolean
+  sunk: boolean
+  shipName?: string
+  alreadyFired: boolean
+}
+
+export interface ShipInfo {
+  index: number
   name: string
   size: number
-  positions: Coordinate[]
-  hitsTaken: number
+  placed: boolean
+}
+
+export interface BoardView {
+  size: number
+  cells: CellState[][]
+}
+
+export interface SessionState {
+  phase: GamePhase
+  playerBoard: BoardView
+  cpuBoard: BoardView
+  currentTurn: 'player' | 'cpu'
+  winner: '' | 'player' | 'cpu'
+  fleet: ShipInfo[]
+  lastPlayerShot?: FireResult
+  lastCPUShot?: FireResult
 }
 
 export interface ChatMessage {
+  id: string
   sender: string
   content: string
   timestamp: string
+  kind: 'chat' | 'event'
 }
-
-export type GamePhase = 'menu' | 'placement' | 'battle' | 'gameover'

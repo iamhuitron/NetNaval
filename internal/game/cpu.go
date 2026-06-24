@@ -16,32 +16,55 @@ const (
 type CPU struct {
 	Difficulty Difficulty
 
-	huntMode bool
-	lastHit  *Coordinate
+	// huntQueue contiene las casillas candidatas a disparar a
+	// continuación porque son adyacentes a un acierto reciente.
+	// Solo se usa en dificultad Media.
+	huntQueue []Coordinate
 }
 
 // NextShot decide la siguiente casilla a disparar según la dificultad.
 func (c *CPU) NextShot(board *Board) Coordinate {
-	if c.Difficulty == Medium && c.huntMode && c.lastHit != nil {
-		// TODO: priorizar casillas adyacentes a lastHit antes de
-		// volver a disparar al azar.
+	if c.Difficulty == Medium {
+		for len(c.huntQueue) > 0 {
+			candidate := c.huntQueue[0]
+			c.huntQueue = c.huntQueue[1:]
+			if board.InBounds(candidate) && !fired(board.Cells[candidate.Y][candidate.X]) {
+				return candidate
+			}
+		}
 	}
+	return c.randomUnfiredShot(board)
+}
 
-	return Coordinate{
-		X: rand.Intn(board.Size),
-		Y: rand.Intn(board.Size),
+func (c *CPU) randomUnfiredShot(board *Board) Coordinate {
+	for {
+		candidate := Coordinate{X: rand.Intn(board.Size), Y: rand.Intn(board.Size)}
+		if !fired(board.Cells[candidate.Y][candidate.X]) {
+			return candidate
+		}
 	}
 }
 
-// RegisterResult actualiza el estado interno de la CPU tras un disparo,
-// activando el modo cacería en dificultad Media cuando hay un acierto.
-func (c *CPU) RegisterResult(shot Coordinate, hit bool) {
+// RegisterResult actualiza el estado interno de la CPU tras un disparo.
+// En dificultad Media: si acierta, encola las casillas adyacentes
+// (modo cacería); si hunde el barco, abandona la cacería y vuelve al
+// disparo aleatorio.
+func (c *CPU) RegisterResult(shot Coordinate, hit bool, sunk bool) {
 	if c.Difficulty != Medium {
 		return
 	}
-	if hit {
-		c.huntMode = true
-		c.lastHit = &shot
+
+	if sunk {
+		c.huntQueue = nil
+		return
 	}
-	// TODO: desactivar huntMode cuando el barco impactado se hunda.
+
+	if hit {
+		c.huntQueue = append(c.huntQueue,
+			Coordinate{X: shot.X + 1, Y: shot.Y},
+			Coordinate{X: shot.X - 1, Y: shot.Y},
+			Coordinate{X: shot.X, Y: shot.Y + 1},
+			Coordinate{X: shot.X, Y: shot.Y - 1},
+		)
+	}
 }
