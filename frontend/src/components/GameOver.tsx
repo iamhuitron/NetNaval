@@ -2,7 +2,7 @@ import { useGameStore } from '../store/gameStore'
 import { useChatStore } from '../store/chatStore'
 
 export function GameOver() {
-  const { session, reset } = useGameStore()
+  const { session, mode, reset } = useGameStore()
   const clearChat          = useChatStore((s) => s.clear)
 
   if (!session) return null

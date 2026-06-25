@@ -3,7 +3,7 @@ import { Board } from './Board'
 import { Chat } from './Chat'
 
 export function Battle() {
-  const { session, playerFire, loading } = useGameStore()
+  const { session, fire, loading, mode } = useGameStore()
   if (!session) return null
 
   const { playerBoard, cpuBoard, currentTurn, lastPlayerShot, lastCPUShot } = session
@@ -88,7 +88,7 @@ export function Battle() {
           <Board
             cells={cpuBoard.cells}
             mode="enemy"
-            onCellClick={(x, y) => { if (isMyTurn) playerFire(x, y) }}
+            onCellClick={(x, y) => { if (isMyTurn) fire(x, y) }}
             disabled={!isMyTurn}
           />
         </div>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useChatStore } from '../store/chatStore'
-import { sendChatMessage } from '../lib/wails'
+import { useGameStore } from '../store/gameStore'
+import * as w from '../lib/wails'
 
 export function Chat() {
   const messages  = useChatStore((s) => s.messages)
@@ -12,10 +13,14 @@ export function Chat() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  const mode = useGameStore(s => s.mode)
   const handleSend = () => {
     const text = input.trim()
     if (!text) return
-    try { sendChatMessage('Jugador', text) } catch { /* fuera de Wails */ }
+    try {
+      if (mode?.startsWith('lan')) w.lanSendChat(text)
+      else w.sendChat('Jugador', text)
+    } catch { /* fuera de Wails */ }
     setInput('')
   }
 

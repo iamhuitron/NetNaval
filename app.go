@@ -2,40 +2,49 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"netnaval/internal/chat"
 	"netnaval/internal/game"
+	"netnaval/internal/network"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App es el struct principal expuesto al frontend vía bindings de Wails.
-// Cada método público con receptor (a *App) queda disponible en React
-// como window.go.main.App.<Metodo>(...).
 type App struct {
-	ctx     context.Context
+	ctx context.Context
+
+	// ── Modo Solo (vs CPU) ──────────────────────────────────────────
 	session *game.Session
+
+	// ── Modo LAN ────────────────────────────────────────────────────
+	lanSession *game.LANSession
+	lanMgr     *network.Manager
 }
 
-// NewApp crea la instancia de App.
 func NewApp() *App { return &App{} }
 
 func (a *App) startup(ctx context.Context) { a.ctx = ctx }
 
-// ── Bindings de sesión ───────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────
+// MODO SOLO
+// ────────────────────────────────────────────────────────────────────
 
-// NewGame crea una sesión nueva.
-// difficulty: 0 = Fácil, 1 = Medio
 func (a *App) NewGame(difficulty int) game.SessionState {
 	d := game.Easy
 	if difficulty == 1 {
 		d = game.Medium
 	}
 	a.session = game.NewSession(d)
+	a.lanSession = nil
+	if a.lanMgr != nil {
+		a.lanMgr.Close()
+		a.lanMgr = nil
+	}
 	return a.session.State()
 }
 
-// PlaceShip coloca el barco indicado en (x, y) con la orientación dada.
 func (a *App) PlaceShip(shipIndex, x, y int, horizontal bool) (game.SessionState, error) {
 	if a.session == nil {
 		return game.SessionState{}, fmt.Errorf("no hay partida activa")
@@ -46,7 +55,6 @@ func (a *App) PlaceShip(shipIndex, x, y int, horizontal bool) (game.SessionState
 	return a.session.State(), nil
 }
 
-// RemoveShip retira un barco ya colocado para reposicionarlo.
 func (a *App) RemoveShip(shipIndex int) (game.SessionState, error) {
 	if a.session == nil {
 		return game.SessionState{}, fmt.Errorf("no hay partida activa")
@@ -57,7 +65,6 @@ func (a *App) RemoveShip(shipIndex int) (game.SessionState, error) {
 	return a.session.State(), nil
 }
 
-// AutoPlace coloca todos los barcos del jugador aleatoriamente.
 func (a *App) AutoPlace() (game.SessionState, error) {
 	if a.session == nil {
 		return game.SessionState{}, fmt.Errorf("no hay partida activa")
@@ -68,7 +75,6 @@ func (a *App) AutoPlace() (game.SessionState, error) {
 	return a.session.State(), nil
 }
 
-// StartBattle inicia la fase de batalla. Todos los barcos deben estar colocados.
 func (a *App) StartBattle() (game.SessionState, error) {
 	if a.session == nil {
 		return game.SessionState{}, fmt.Errorf("no hay partida activa")
@@ -80,37 +86,28 @@ func (a *App) StartBattle() (game.SessionState, error) {
 	return a.session.State(), nil
 }
 
-// PlayerFire ejecuta el disparo del jugador en (x, y) sobre el tablero
-// de la CPU. Internamente también ejecuta el turno de la CPU y emite
-// los mensajes de evento correspondientes al panel de chat.
 func (a *App) PlayerFire(x, y int) (game.SessionState, error) {
 	if a.session == nil {
 		return game.SessionState{}, fmt.Errorf("no hay partida activa")
 	}
-
 	if err := a.session.PlayerFire(x, y); err != nil {
 		return game.SessionState{}, err
 	}
-
 	state := a.session.State()
 
-	// Narrar el disparo del jugador
 	if p := state.LastPlayerShot; p != nil {
 		if p.Sunk {
-			a.emitEvent(fmt.Sprintf("💥 ¡Hundiste el %s de la CPU!", p.ShipName))
+			a.emitEvent(fmt.Sprintf("💥 ¡Hundiste el %s!", p.ShipName))
 		} else if p.Hit {
 			a.emitEvent(fmt.Sprintf("🎯 ¡Impacto en el %s!", p.ShipName))
 		} else {
 			a.emitEvent("💧 Fallaste. ¡Agua!")
 		}
 	}
-
 	if state.Winner == "player" {
 		a.emitEvent("🏆 ¡Victoria! Hundiste toda la flota enemiga.")
 		return state, nil
 	}
-
-	// Narrar el disparo de la CPU
 	if c := state.LastCPUShot; c != nil {
 		if c.Sunk {
 			a.emitEvent(fmt.Sprintf("💣 La CPU hundió tu %s.", c.ShipName))
@@ -120,15 +117,12 @@ func (a *App) PlayerFire(x, y int) (game.SessionState, error) {
 			a.emitEvent("🌊 La CPU falló. ¡Agua!")
 		}
 	}
-
 	if state.Winner == "cpu" {
 		a.emitEvent("💀 La CPU hundió toda tu flota. Has perdido.")
 	}
-
 	return state, nil
 }
 
-// GetState devuelve el estado actual de la partida.
 func (a *App) GetState() (game.SessionState, error) {
 	if a.session == nil {
 		return game.SessionState{}, fmt.Errorf("no hay partida activa")
@@ -136,15 +130,243 @@ func (a *App) GetState() (game.SessionState, error) {
 	return a.session.State(), nil
 }
 
-// ── Binding de chat ───────────────────────────────────────────────────
-
-// SendChatMessage emite un mensaje de chat del jugador al frontend.
 func (a *App) SendChatMessage(sender, content string) {
 	msg := chat.NewMessage(sender, content)
 	runtime.EventsEmit(a.ctx, "chat:message", msg)
 }
 
-// emitEvent envía un mensaje de evento del sistema al panel de chat.
+// ────────────────────────────────────────────────────────────────────
+// MODO LAN
+// ────────────────────────────────────────────────────────────────────
+
+// HostLanGame inicia un servidor TCP y devuelve la IP local del host.
+func (a *App) HostLanGame() (string, error) {
+	if a.lanMgr != nil {
+		a.lanMgr.Close()
+	}
+	mgr, err := network.NewHost()
+	if err != nil {
+		return "", err
+	}
+	a.lanMgr = mgr
+	a.lanSession = game.NewLANSession()
+	a.session = nil
+
+	mgr.OnConnect = func() {
+		runtime.EventsEmit(a.ctx, "lan:connected")
+		a.emitEvent("✅ Oponente conectado. Coloca tus barcos.")
+	}
+	mgr.OnMessage = a.handleLanMessage
+	mgr.OnDisconnect = func(e error) {
+		runtime.EventsEmit(a.ctx, "lan:disconnected")
+		a.emitEvent("⚠ Oponente desconectado.")
+	}
+
+	go func() {
+		if err := mgr.WaitForClient(); err != nil {
+			runtime.EventsEmit(a.ctx, "lan:error", err.Error())
+		}
+	}()
+
+	return network.LocalIP(), nil
+}
+
+// JoinLanGame conecta a un host y devuelve el estado inicial.
+func (a *App) JoinLanGame(hostIP string) (game.SessionState, error) {
+	if a.lanMgr != nil {
+		a.lanMgr.Close()
+	}
+	mgr, err := network.NewClient(hostIP)
+	if err != nil {
+		return game.SessionState{}, err
+	}
+	a.lanMgr = mgr
+	a.lanSession = game.NewLANSession()
+	a.session = nil
+
+	mgr.OnMessage = a.handleLanMessage
+	mgr.OnDisconnect = func(e error) {
+		runtime.EventsEmit(a.ctx, "lan:disconnected")
+		a.emitEvent("⚠ Oponente desconectado.")
+	}
+
+	a.emitEvent("✅ Conectado al host. Coloca tus barcos.")
+	return a.lanSession.State(), nil
+}
+
+// LanPlaceShip coloca un barco propio en modo LAN.
+func (a *App) LanPlaceShip(idx, x, y int, horizontal bool) (game.SessionState, error) {
+	if a.lanSession == nil {
+		return game.SessionState{}, fmt.Errorf("no hay partida LAN")
+	}
+	if err := a.lanSession.PlaceShip(idx, x, y, horizontal); err != nil {
+		return game.SessionState{}, err
+	}
+	return a.lanSession.State(), nil
+}
+
+// LanRemoveShip retira un barco ya colocado.
+func (a *App) LanRemoveShip(idx int) (game.SessionState, error) {
+	if a.lanSession == nil {
+		return game.SessionState{}, fmt.Errorf("no hay partida LAN")
+	}
+	if err := a.lanSession.RemoveShip(idx); err != nil {
+		return game.SessionState{}, err
+	}
+	return a.lanSession.State(), nil
+}
+
+// LanAutoPlace coloca todos los barcos propios aleatoriamente.
+func (a *App) LanAutoPlace() (game.SessionState, error) {
+	if a.lanSession == nil {
+		return game.SessionState{}, fmt.Errorf("no hay partida LAN")
+	}
+	if err := a.lanSession.AutoPlace(); err != nil {
+		return game.SessionState{}, err
+	}
+	return a.lanSession.State(), nil
+}
+
+// LanReady marca al jugador como listo y envía la señal al rival.
+// El host inicia la batalla cuando ambos están listos.
+func (a *App) LanReady() (game.SessionState, error) {
+	if a.lanSession == nil {
+		return game.SessionState{}, fmt.Errorf("no hay partida LAN")
+	}
+	if !a.lanSession.AllPlaced() {
+		return game.SessionState{}, fmt.Errorf("coloca todos tus barcos primero")
+	}
+	a.lanSession.MyReady = true
+	if err := a.lanMgr.Send(network.MsgReady, nil); err != nil {
+		return game.SessionState{}, err
+	}
+
+	if a.lanMgr.IsHost() && a.lanSession.PeerReady {
+		a.startLanBattle()
+	} else {
+		a.emitEvent("⏳ Esperando al oponente…")
+	}
+	return a.lanSession.State(), nil
+}
+
+// LanFire envía un disparo al oponente. El resultado llega como evento.
+func (a *App) LanFire(x, y int) error {
+	if a.lanSession == nil {
+		return fmt.Errorf("no hay partida LAN")
+	}
+	if err := a.lanSession.RegisterFire(x, y); err != nil {
+		return err
+	}
+	return a.lanMgr.Send(network.MsgFire, network.FireCoord{X: x, Y: y})
+}
+
+// LanGetState devuelve el estado LAN actual.
+func (a *App) LanGetState() (game.SessionState, error) {
+	if a.lanSession == nil {
+		return game.SessionState{}, fmt.Errorf("no hay partida LAN")
+	}
+	return a.lanSession.State(), nil
+}
+
+// LanSendChat envía un mensaje de chat al oponente y lo muestra localmente.
+func (a *App) LanSendChat(content string) {
+	if a.lanMgr == nil {
+		return
+	}
+	a.lanMgr.Send(network.MsgChat, network.ChatPayload{Sender: "Jugador", Content: content})
+	// Eco local
+	msg := chat.NewMessage("Jugador", content)
+	runtime.EventsEmit(a.ctx, "chat:message", msg)
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Manejador de mensajes LAN (desde la goroutine de red)
+// ────────────────────────────────────────────────────────────────────
+
+func (a *App) handleLanMessage(env network.Envelope) {
+	switch env.Type {
+
+	case network.MsgReady:
+		a.lanSession.PeerReady = true
+		if a.lanMgr.IsHost() && a.lanSession.MyReady {
+			a.startLanBattle()
+		}
+
+	case network.MsgStart:
+		// Solo el cliente recibe esto
+		a.lanSession.StartBattle(false) // cliente va segundo
+		a.emitEvent("⚓ ¡La batalla ha comenzado! El oponente dispara primero.")
+		runtime.EventsEmit(a.ctx, "lan:state", a.lanSession.State())
+		runtime.EventsEmit(a.ctx, "lan:battle_start", nil)
+
+	case network.MsgFire:
+		// El oponente nos disparó
+		var coord network.FireCoord
+		if err := json.Unmarshal(env.Payload, &coord); err != nil {
+			return
+		}
+		result, err := a.lanSession.ReceiveOpponentFire(coord.X, coord.Y)
+		if err != nil {
+			return
+		}
+		// Narrar en bitácora
+		if result.Sunk {
+			a.emitEvent(fmt.Sprintf("💣 El oponente hundió tu %s.", result.ShipName))
+		} else if result.Hit {
+			a.emitEvent(fmt.Sprintf("🔥 El oponente impactó en tu %s.", result.ShipName))
+		} else {
+			a.emitEvent("🌊 El oponente falló. ¡Agua!")
+		}
+		// Enviar resultado al atacante
+		a.lanMgr.Send(network.MsgFireResult, network.FireResultPayload{
+			X: coord.X, Y: coord.Y,
+			Hit: result.Hit, Sunk: result.Sunk,
+			ShipName: result.ShipName, ShipSize: result.ShipSize,
+		})
+		state := a.lanSession.State()
+		if state.Winner == "cpu" {
+			a.emitEvent("💀 El oponente hundió toda tu flota. Has perdido.")
+		}
+		runtime.EventsEmit(a.ctx, "lan:state", state)
+
+	case network.MsgFireResult:
+		// Resultado de nuestro disparo
+		var r network.FireResultPayload
+		if err := json.Unmarshal(env.Payload, &r); err != nil {
+			return
+		}
+		a.lanSession.ConfirmFireResult(r.X, r.Y, r.Hit, r.Sunk, r.ShipName, r.ShipSize)
+		if r.Sunk {
+			a.emitEvent(fmt.Sprintf("💥 ¡Hundiste el %s del oponente!", r.ShipName))
+		} else if r.Hit {
+			a.emitEvent(fmt.Sprintf("🎯 ¡Impacto en el %s!", r.ShipName))
+		} else {
+			a.emitEvent("💧 Fallaste. ¡Agua!")
+		}
+		state := a.lanSession.State()
+		if state.Winner == "player" {
+			a.emitEvent("🏆 ¡Victoria! Hundiste toda la flota enemiga.")
+		}
+		runtime.EventsEmit(a.ctx, "lan:state", state)
+
+	case network.MsgChat:
+		var c network.ChatPayload
+		if err := json.Unmarshal(env.Payload, &c); err != nil {
+			return
+		}
+		msg := chat.NewMessage(c.Sender, c.Content)
+		runtime.EventsEmit(a.ctx, "chat:message", msg)
+	}
+}
+
+func (a *App) startLanBattle() {
+	a.lanMgr.Send(network.MsgStart, nil)
+	a.lanSession.StartBattle(true) // host va primero
+	a.emitEvent("⚓ ¡La batalla ha comenzado! Eres el primero en disparar.")
+	runtime.EventsEmit(a.ctx, "lan:state", a.lanSession.State())
+	runtime.EventsEmit(a.ctx, "lan:battle_start", nil)
+}
+
 func (a *App) emitEvent(content string) {
 	msg := chat.NewEvent(content)
 	runtime.EventsEmit(a.ctx, "chat:message", msg)

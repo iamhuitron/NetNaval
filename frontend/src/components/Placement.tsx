@@ -4,7 +4,7 @@ import { Board } from './Board'
 import type { ShipInfo } from '../types'
 
 export function Placement() {
-  const { session, placeShip, removeShip, autoPlace, startBattle, loading, error, clearError } = useGameStore()
+  const { session, placeShip, removeShip, autoPlace, readyOrStart, loading, error, clearError, mode } = useGameStore()
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
   const [horizontal, setHorizontal]   = useState(true)
   const [hovered, setHovered]         = useState<{ x: number; y: number } | null>(null)
@@ -93,13 +93,13 @@ export function Placement() {
             {horizontal ? '→ Horizontal' : '↓ Vertical'}
           </button>
           <button
-            onClick={startBattle}
+            onClick={readyOrStart}
             disabled={!allPlaced || loading}
             className="px-8 py-2 rounded-lg font-bold text-sm tracking-wider transition-colors
                        bg-cyan-500 hover:bg-cyan-400 text-slate-950
                        disabled:bg-slate-800 disabled:text-slate-600 disabled:cursor-not-allowed"
           >
-            {loading ? '···' : '⚓ ZARPAR'}
+            {loading ? '···' : mode?.startsWith('lan') ? '✓ LISTO' : '⚓ ZARPAR'}
           </button>
         </div>
       </div>

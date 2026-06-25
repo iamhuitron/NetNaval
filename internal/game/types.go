@@ -77,6 +77,7 @@ type FireResult struct {
 	Hit          bool       `json:"hit"`
 	Sunk         bool       `json:"sunk"`
 	ShipName     string     `json:"shipName,omitempty"`
+	ShipSize     int        `json:"shipSize,omitempty"` // > 0 cuando Sunk=true
 	AlreadyFired bool       `json:"alreadyFired"`
 }
 
@@ -216,7 +217,11 @@ func (b *Board) Fire(c Coordinate) (FireResult, error) {
 		b.Cells[c.Y][c.X] = CellHit
 	}
 
-	return FireResult{Coordinate: c, Hit: true, Sunk: sunk, ShipName: ship.Name}, nil
+	size := 0
+	if sunk {
+		size = ship.Size
+	}
+	return FireResult{Coordinate: c, Hit: true, Sunk: sunk, ShipName: ship.Name, ShipSize: size}, nil
 }
 
 // AllSunk indica si toda la flota del tablero fue hundida (condición
