@@ -19,7 +19,7 @@ interface WailsApp {
   LanRemoveShip(i: number): Promise<SessionState>
   LanAutoPlace(): Promise<SessionState>
   LanReady(): Promise<SessionState>
-  LanFire(x: number, y: number): Promise<void>
+  LanFire(x: number, y: number): Promise<SessionState>
   LanGetState(): Promise<SessionState>
   LanSendChat(content: string): Promise<void>
 }
@@ -63,7 +63,7 @@ export const lanPlaceShip   = (i: number, x: number, y: number, h: boolean) => a
 export const lanRemoveShip  = (i: number)                                   => api().LanRemoveShip(i)
 export const lanAutoPlace   = ()                                            => api().LanAutoPlace()
 export const lanReady       = ()                                            => api().LanReady()
-export const lanFire        = (x: number, y: number)                       => api().LanFire(x, y)
+export const lanFire        = (x: number, y: number): Promise<SessionState> => api().LanFire(x, y)
 export const lanGetState    = ()                                            => api().LanGetState()
 export const lanSendChat    = (c: string)                                   => api().LanSendChat(c)
 

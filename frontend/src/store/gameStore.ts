@@ -3,61 +3,57 @@ import type { SessionState, Difficulty, GameMode } from '../types'
 import * as w from '../lib/wails'
 
 interface GameStore {
-  session:  SessionState | null
-  mode:     GameMode | null
-  loading:  boolean
-  error:    string | null
-  lanIP:    string | null   // IP local que muestra el host
+  session:     SessionState | null
+  mode:        GameMode | null
+  loading:     boolean
+  error:       string | null
+  lanIP:       string | null
+  lanMyReady:  boolean      // jugador LAN pulsó "Listo", esperando al rival
 
-  // ── Menú ───────────────────────────────────────────────────────────
-  startSolo:   (d: Difficulty) => Promise<void>
-  hostLan:     () => Promise<void>
-  joinLan:     (ip: string) => Promise<void>
+  startSolo:    (d: Difficulty) => Promise<void>
+  hostLan:      () => Promise<void>
+  joinLan:      (ip: string) => Promise<void>
 
-  // ── Colocación (funciona para ambos modos) ────────────────────────
-  placeShip:   (i: number, x: number, y: number, h: boolean) => Promise<void>
-  removeShip:  (i: number) => Promise<void>
-  autoPlace:   () => Promise<void>
-  readyOrStart:() => Promise<void>   // solo → startBattle; LAN → lanReady
+  placeShip:    (i: number, x: number, y: number, h: boolean) => Promise<void>
+  removeShip:   (i: number) => Promise<void>
+  autoPlace:    () => Promise<void>
+  readyOrStart: () => Promise<void>
 
-  // ── Batalla ───────────────────────────────────────────────────────
-  fire:        (x: number, y: number) => Promise<void>
+  fire:         (x: number, y: number) => Promise<void>
 
-  // ── LAN events ───────────────────────────────────────────────────
-  setSession:  (s: SessionState) => void
+  // Llamado por el listener de eventos lan:state
+  setSession:   (s: SessionState) => void
 
-  // ── Control ───────────────────────────────────────────────────────
-  reset:       () => void
-  clearError:  () => void
+  reset:        () => void
+  clearError:   () => void
 }
 
-// Helper que envuelve una llamada async, limpia el error y guarda la sesión
-async function run(
+// ── Helper interno ────────────────────────────────────────────────────
+async function call(
   set: (p: Partial<GameStore>) => void,
-  fn: () => Promise<SessionState>,
-  opts?: { loading?: boolean }
+  fn: () => Promise<SessionState>
 ) {
-  if (opts?.loading) set({ loading: true })
   set({ error: null })
   try {
     const session = await fn()
-    set({ session, loading: false })
+    set({ session })
   } catch (e) {
-    set({ error: String(e), loading: false })
+    set({ error: String(e) })
   }
 }
 
 export const useGameStore = create<GameStore>((set, get) => ({
-  session: null,
-  mode:    null,
-  loading: false,
-  error:   null,
-  lanIP:   null,
+  session:    null,
+  mode:       null,
+  loading:    false,
+  error:      null,
+  lanIP:      null,
+  lanMyReady: false,
 
-  // ── Menú ──────────────────────────────────────────────────────────
+  // ── Menú ─────────────────────────────────────────────────────────
 
   startSolo: async (d) => {
-    set({ loading: true, error: null, mode: 'solo' })
+    set({ loading: true, error: null, mode: 'solo', lanMyReady: false })
     try {
       const session = await w.newGame(d)
       set({ session, loading: false })
@@ -65,7 +61,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   hostLan: async () => {
-    set({ loading: true, error: null })
+    set({ loading: true, error: null, lanMyReady: false })
     try {
       const ip = await w.hostLanGame()
       set({ mode: 'lan_host', lanIP: ip, loading: false, session: null })
@@ -73,7 +69,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   joinLan: async (ip) => {
-    set({ loading: true, error: null })
+    set({ loading: true, error: null, lanMyReady: false })
     try {
       const session = await w.joinLanGame(ip)
       set({ mode: 'lan_client', session, loading: false })
@@ -83,45 +79,54 @@ export const useGameStore = create<GameStore>((set, get) => ({
   // ── Colocación ────────────────────────────────────────────────────
 
   placeShip: (i, x, y, h) => {
-    const mode = get().mode
-    return run(set, () => mode === 'solo' ? w.placeShip(i, x, y, h) : w.lanPlaceShip(i, x, y, h))
+    const m = get().mode
+    return call(set, () => m === 'solo' ? w.placeShip(i, x, y, h) : w.lanPlaceShip(i, x, y, h))
   },
 
   removeShip: (i) => {
-    const mode = get().mode
-    return run(set, () => mode === 'solo' ? w.removeShip(i) : w.lanRemoveShip(i))
+    const m = get().mode
+    return call(set, () => m === 'solo' ? w.removeShip(i) : w.lanRemoveShip(i))
   },
 
   autoPlace: () => {
-    const mode = get().mode
-    return run(set, () => mode === 'solo' ? w.autoPlace() : w.lanAutoPlace())
+    const m = get().mode
+    return call(set, () => m === 'solo' ? w.autoPlace() : w.lanAutoPlace())
   },
 
-  readyOrStart: () => {
-    const mode = get().mode
-    return run(set, () => mode === 'solo' ? w.startBattle() : w.lanReady(), { loading: true })
+  readyOrStart: async () => {
+    const m = get().mode
+    set({ loading: true, error: null })
+    try {
+      if (m === 'solo') {
+        const session = await w.startBattle()
+        set({ session, loading: false })
+      } else {
+        const session = await w.lanReady()
+        set({ session, loading: false, lanMyReady: true })
+      }
+    } catch (e) { set({ error: String(e), loading: false }) }
   },
 
   // ── Batalla ───────────────────────────────────────────────────────
 
   fire: async (x, y) => {
-    const mode = get().mode
+    const m = get().mode
     set({ error: null })
     try {
-      if (mode === 'solo') {
+      if (m === 'solo') {
         const session = await w.playerFire(x, y)
         set({ session })
       } else {
-        // LAN: resultado llega vía evento lan:state
-        await w.lanFire(x, y)
+        // lanFire ahora devuelve el estado con currentTurn="cpu" inmediatamente
+        const session = await w.lanFire(x, y)
+        set({ session })
+        // El resultado definitivo llega por el evento lan:state (onLanState → setSession)
       }
     } catch (e) { set({ error: String(e) }) }
   },
 
-  // ── LAN event handler ─────────────────────────────────────────────
   setSession: (session) => set({ session }),
 
-  // ── Control ───────────────────────────────────────────────────────
-  reset:      () => set({ session: null, mode: null, error: null, lanIP: null }),
+  reset:      () => set({ session: null, mode: null, error: null, lanIP: null, lanMyReady: false }),
   clearError: () => set({ error: null }),
 }))

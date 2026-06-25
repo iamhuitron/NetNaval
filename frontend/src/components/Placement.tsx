@@ -1,20 +1,33 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useEffect } from 'react'
 import { useGameStore } from '../store/gameStore'
 import { Board } from './Board'
 import type { ShipInfo } from '../types'
 
 export function Placement() {
-  const { session, placeShip, removeShip, autoPlace, readyOrStart, loading, error, clearError, mode } = useGameStore()
+  const {
+    session, mode, placeShip, removeShip, autoPlace,
+    readyOrStart, loading, error, clearError, lanMyReady,
+  } = useGameStore()
+
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
   const [horizontal, setHorizontal]   = useState(true)
   const [hovered, setHovered]         = useState<{ x: number; y: number } | null>(null)
 
+  // R / r → rotar orientación
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === 'r') setHorizontal(h => !h)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   if (!session) return null
 
   const { fleet, playerBoard } = session
-  const allPlaced = fleet.every((s) => s.placed)
+  const isLAN    = mode?.startsWith('lan') ?? false
+  const allPlaced = fleet.every(s => s.placed)
 
-  // Si el barco seleccionado ya fue colocado, no hay selección activa
   const activeIdx =
     selectedIdx !== null && !fleet[selectedIdx]?.placed ? selectedIdx : null
 
@@ -43,28 +56,31 @@ export function Placement() {
     return true
   }, [previewCells, playerBoard])
 
-  // ── Handlers ──────────────────────────────────────────────────────
+  // ── Handlers ─────────────────────────────────────────────────────
 
   const handleCellClick = useCallback(async (x: number, y: number) => {
     if (activeIdx === null || !previewValid) return
     await placeShip(activeIdx, x, y, horizontal)
-    // Avanzar automáticamente al siguiente barco sin colocar
-    const updated = useGameStore.getState().session?.fleet ?? []
-    const next    = updated.findIndex((s) => !s.placed)
+    const updatedFleet = useGameStore.getState().session?.fleet ?? []
+    const next = updatedFleet.findIndex(s => !s.placed)
     setSelectedIdx(next >= 0 ? next : null)
   }, [activeIdx, previewValid, placeShip, horizontal])
 
   const handleShipClick = (ship: ShipInfo) => {
     clearError()
     if (ship.placed) {
-      // Retirar el barco para reposicionarlo
       removeShip(ship.index).then(() => setSelectedIdx(ship.index))
     } else {
       setSelectedIdx(ship.index === selectedIdx ? null : ship.index)
     }
   }
 
-  const handleAutoPlace = () => { clearError(); setSelectedIdx(null); autoPlace() }
+  // ── Botón principal ───────────────────────────────────────────────
+  const buttonDisabled = !allPlaced || loading || lanMyReady
+  const buttonLabel = loading ? '···'
+    : lanMyReady     ? '⏳ Esperando rival…'
+    : isLAN          ? '✓ LISTO'
+    : '⚓ ZARPAR'
 
   // ── Render ────────────────────────────────────────────────────────
 
@@ -74,32 +90,30 @@ export function Placement() {
       {/* Header */}
       <div className="flex items-center justify-between px-8 py-4 border-b border-slate-800/70">
         <div>
-          <h2 className="font-bold text-lg tracking-[0.15em] text-slate-100">DESPLIEGUE DE FLOTA</h2>
-          <p className="text-slate-500 text-xs mt-0.5">Coloca tus barcos · Click en la lista para retirar</p>
+          <h2 className="font-bold text-lg tracking-[0.15em]">DESPLIEGUE DE FLOTA</h2>
+          <p className="text-slate-500 text-xs mt-0.5">
+            Click en la lista · <kbd className="bg-slate-800 px-1 rounded text-slate-400">R</kbd> rota
+            {isLAN && <span className="ml-2 text-blue-400">· 🌐 LAN</span>}
+          </p>
         </div>
         <div className="flex gap-3 items-center">
-          <button
-            onClick={handleAutoPlace}
+          <button onClick={() => { clearError(); setSelectedIdx(null); autoPlace() }}
             className="px-4 py-2 rounded-lg border border-slate-700 text-slate-300 text-sm
-                       hover:border-slate-500 hover:text-slate-100 transition-colors"
-          >
+                       hover:border-slate-500 transition-colors">
             ↺ Auto-colocar
           </button>
-          <button
-            onClick={() => setHorizontal((h) => !h)}
+          <button onClick={() => setHorizontal(h => !h)}
             className="px-4 py-2 rounded-lg border border-slate-700 text-slate-300 text-sm
-                       hover:border-slate-500 hover:text-slate-100 transition-colors w-36 text-center"
-          >
+                       hover:border-slate-500 transition-colors w-36 text-center">
             {horizontal ? '→ Horizontal' : '↓ Vertical'}
           </button>
-          <button
-            onClick={readyOrStart}
-            disabled={!allPlaced || loading}
-            className="px-8 py-2 rounded-lg font-bold text-sm tracking-wider transition-colors
-                       bg-cyan-500 hover:bg-cyan-400 text-slate-950
-                       disabled:bg-slate-800 disabled:text-slate-600 disabled:cursor-not-allowed"
-          >
-            {loading ? '···' : mode?.startsWith('lan') ? '✓ LISTO' : '⚓ ZARPAR'}
+          <button onClick={readyOrStart} disabled={buttonDisabled}
+            className={`px-8 py-2 rounded-lg font-bold text-sm tracking-wider transition-colors
+              ${lanMyReady
+                ? 'bg-yellow-900/50 border border-yellow-700 text-yellow-400 cursor-wait'
+                : 'bg-cyan-500 hover:bg-cyan-400 text-slate-950 disabled:bg-slate-800 disabled:text-slate-600 disabled:cursor-not-allowed'
+              }`}>
+            {buttonLabel}
           </button>
         </div>
       </div>
@@ -110,21 +124,17 @@ export function Placement() {
         {/* Fleet list */}
         <div className="w-56 border-r border-slate-800/70 p-4 flex flex-col gap-2 overflow-y-auto">
           <p className="text-[10px] uppercase tracking-[0.2em] text-slate-600 mb-1">Tu flota</p>
-
-          {fleet.map((ship) => {
+          {fleet.map(ship => {
             const isActive = activeIdx === ship.index
             return (
-              <button
-                key={ship.index}
-                onClick={() => handleShipClick(ship)}
+              <button key={ship.index} onClick={() => handleShipClick(ship)}
                 className={`w-full text-left p-3 rounded-xl border transition-all duration-150 ${
                   ship.placed
                     ? 'border-slate-700/40 bg-slate-900/30 text-slate-500 hover:border-red-900'
                     : isActive
                     ? 'border-cyan-500 bg-cyan-950/40 text-cyan-300'
                     : 'border-slate-700 bg-slate-900/60 text-slate-300 hover:border-slate-500'
-                }`}
-              >
+                }`}>
                 <div className="flex justify-between items-center mb-2">
                   <span className="text-xs font-semibold">{ship.name}</span>
                   {ship.placed
@@ -133,15 +143,11 @@ export function Placement() {
                     ? <span className="text-[9px] text-cyan-400">activo</span>
                     : null}
                 </div>
-                {/* Visualización del tamaño */}
                 <div className="flex gap-0.5">
                   {Array.from({ length: ship.size }, (_, i) => (
-                    <div
-                      key={i}
-                      className={`h-2.5 w-2.5 rounded-sm ${
-                        ship.placed ? 'bg-green-800' : isActive ? 'bg-cyan-700' : 'bg-blue-900'
-                      }`}
-                    />
+                    <div key={i} className={`h-2.5 w-2.5 rounded-sm ${
+                      ship.placed ? 'bg-green-800' : isActive ? 'bg-cyan-700' : 'bg-blue-900'
+                    }`} />
                   ))}
                 </div>
                 {ship.placed && (
@@ -151,9 +157,16 @@ export function Placement() {
             )
           })}
 
-          {allPlaced && (
-            <div className="mt-2 p-3 rounded-xl border border-green-800/60 bg-green-950/30 text-green-400 text-xs text-center">
+          {allPlaced && !lanMyReady && (
+            <div className="mt-2 p-3 rounded-xl border border-green-800/60 bg-green-950/30
+                            text-green-400 text-xs text-center">
               ✓ Flota lista
+            </div>
+          )}
+          {lanMyReady && (
+            <div className="mt-2 p-3 rounded-xl border border-yellow-800/60 bg-yellow-950/30
+                            text-yellow-400 text-xs text-center animate-pulse">
+              ⏳ Esperando al rival…
             </div>
           )}
         </div>
@@ -162,15 +175,14 @@ export function Placement() {
         <div className="flex-1 flex flex-col items-center justify-center gap-4">
           {activeIdx !== null ? (
             <p className="text-xs text-cyan-400 tracking-wider">
-              Colocando: <span className="font-bold">{fleet[activeIdx]?.name}</span>
+              <span className="font-bold">{fleet[activeIdx]?.name}</span>
               {' '}({fleet[activeIdx]?.size} casillas · {horizontal ? 'horizontal' : 'vertical'})
             </p>
           ) : (
             <p className="text-xs text-slate-600 tracking-wider">
-              {allPlaced ? 'Haz click en un barco para reposicionarlo' : 'Selecciona un barco de la lista'}
+              {allPlaced ? 'Click en un barco para reposicionarlo' : 'Selecciona un barco de la lista'}
             </p>
           )}
-
           <Board
             cells={playerBoard.cells}
             mode="placement"
@@ -179,17 +191,15 @@ export function Placement() {
             onBoardLeave={() => setHovered(null)}
             previewCells={previewCells}
             previewValid={previewValid}
-            disabled={activeIdx === null}
+            disabled={activeIdx === null || lanMyReady}
           />
         </div>
       </div>
 
-      {/* Error */}
       {error && (
-        <div
-          onClick={clearError}
-          className="px-6 py-2.5 bg-red-950/80 border-t border-red-900 text-red-400 text-sm cursor-pointer"
-        >
+        <div onClick={clearError}
+          className="px-6 py-2.5 bg-red-950/80 border-t border-red-900
+                     text-red-400 text-sm cursor-pointer">
           ⚠ {error}
         </div>
       )}

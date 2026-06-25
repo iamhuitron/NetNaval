@@ -154,6 +154,8 @@ func (a *App) HostLanGame() (string, error) {
 
 	mgr.OnConnect = func() {
 		runtime.EventsEmit(a.ctx, "lan:connected")
+		// Enviar el estado inicial para que el host transite a Placement
+		runtime.EventsEmit(a.ctx, "lan:state", a.lanSession.State())
 		a.emitEvent("✅ Oponente conectado. Coloca tus barcos.")
 	}
 	mgr.OnMessage = a.handleLanMessage
@@ -249,15 +251,20 @@ func (a *App) LanReady() (game.SessionState, error) {
 	return a.lanSession.State(), nil
 }
 
-// LanFire envía un disparo al oponente. El resultado llega como evento.
-func (a *App) LanFire(x, y int) error {
+// LanFire registra el disparo localmente (currentTurn → "cpu") y lo envía
+// al oponente. Devuelve el estado inmediato para que el frontend bloquee
+// el tablero antes de que llegue la respuesta por evento.
+func (a *App) LanFire(x, y int) (game.SessionState, error) {
 	if a.lanSession == nil {
-		return fmt.Errorf("no hay partida LAN")
+		return game.SessionState{}, fmt.Errorf("no hay partida LAN")
 	}
 	if err := a.lanSession.RegisterFire(x, y); err != nil {
-		return err
+		return game.SessionState{}, err
 	}
-	return a.lanMgr.Send(network.MsgFire, network.FireCoord{X: x, Y: y})
+	if err := a.lanMgr.Send(network.MsgFire, network.FireCoord{X: x, Y: y}); err != nil {
+		return game.SessionState{}, err
+	}
+	return a.lanSession.State(), nil
 }
 
 // LanGetState devuelve el estado LAN actual.
