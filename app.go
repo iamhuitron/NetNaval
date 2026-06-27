@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"netnaval/internal/chat"
 	"netnaval/internal/game"
 	"netnaval/internal/network"
+	"netnaval/internal/online"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -284,6 +287,110 @@ func (a *App) LanSendChat(content string) {
 	// Eco local
 	msg := chat.NewMessage("Jugador", content)
 	runtime.EventsEmit(a.ctx, "chat:message", msg)
+}
+
+// ────────────────────────────────────────────────────────────────────
+// MODO ONLINE (Internet, sin servidor central)
+// ────────────────────────────────────────────────────────────────────
+
+// OnlineHostResult contiene toda la información que el frontend necesita
+// para mostrar el Room Code y el estado de UPnP.
+type OnlineHostResult struct {
+	RoomCode    string `json:"roomCode"`
+	PublicIP    string `json:"publicIP"`
+	LocalIP     string `json:"localIP"`
+	UPnPSuccess bool   `json:"upnpSuccess"`
+	UPnPError   string `json:"upnpError,omitempty"`
+}
+
+// HostOnlineGame abre el servidor TCP, intenta UPnP para abrir el puerto
+// en el router y devuelve el Room Code (7 chars Base36) para compartir.
+func (a *App) HostOnlineGame() (OnlineHostResult, error) {
+	// Limpiar sesión anterior
+	if a.lanMgr != nil {
+		a.lanMgr.Close()
+	}
+	mgr, err := network.NewHost()
+	if err != nil {
+		return OnlineHostResult{}, fmt.Errorf("no se pudo iniciar el servidor: %w", err)
+	}
+	a.lanMgr = mgr
+	a.lanSession = game.NewLANSession()
+	a.session = nil
+
+	localIP := network.LocalIP()
+	result := OnlineHostResult{LocalIP: localIP}
+
+	// ── Obtener IP pública ───────────────────────────────────────────
+
+	// Primero intentar UPnP (más rápido y nos da la IP del router)
+	upnpResult := online.TryUPnP(localIP, online.Port, 6*time.Second)
+	if upnpResult.Success {
+		result.PublicIP = upnpResult.ExternalIP
+		result.UPnPSuccess = true
+	} else {
+		// UPnP falló: obtener IP pública por HTTP
+		if upnpResult.Err != nil {
+			result.UPnPError = upnpResult.Err.Error()
+		}
+		pubIP, err := online.GetPublicIP()
+		if err == nil {
+			result.PublicIP = pubIP
+		} else {
+			// Último recurso: usar la IP local
+			result.PublicIP = localIP
+		}
+	}
+
+	// Si UPnP dio la IP pero no la IP pública, usar GetPublicIP
+	if upnpResult.Success && result.PublicIP == "" {
+		if pubIP, err := online.GetPublicIP(); err == nil {
+			result.PublicIP = pubIP
+		}
+	}
+
+	// ── Generar Room Code ────────────────────────────────────────────
+	ip := net.ParseIP(result.PublicIP)
+	if ip == nil {
+		ip = net.ParseIP(localIP)
+	}
+	code, err := online.IPToCode(ip)
+	if err != nil {
+		a.lanMgr.Close()
+		return OnlineHostResult{}, fmt.Errorf("no se pudo generar el código: %w", err)
+	}
+	result.RoomCode = code
+
+	// ── Callbacks de red ─────────────────────────────────────────────
+	mgr.OnConnect = func() {
+		runtime.EventsEmit(a.ctx, "lan:connected")
+		runtime.EventsEmit(a.ctx, "lan:state", a.lanSession.State())
+		a.emitEvent("✅ Oponente conectado. Coloca tus barcos.")
+	}
+	mgr.OnMessage = a.handleLanMessage
+	mgr.OnDisconnect = func(e error) {
+		runtime.EventsEmit(a.ctx, "lan:disconnected")
+		a.emitEvent("⚠ Oponente desconectado.")
+	}
+	go func() {
+		if err := mgr.WaitForClient(); err != nil {
+			runtime.EventsEmit(a.ctx, "lan:error", err.Error())
+		}
+	}()
+
+	return result, nil
+}
+
+// JoinOnlineGame decodifica un Room Code y conecta al host.
+// Reutiliza toda la infraestructura LAN — la diferencia es solo cómo
+// se obtiene la dirección del servidor.
+func (a *App) JoinOnlineGame(code string) (game.SessionState, error) {
+	addr, err := online.CodeToAddr(code)
+	if err != nil {
+		return game.SessionState{}, err
+	}
+	// Reutilizar JoinLanGame con la dirección decodificada
+	return a.JoinLanGame(addr)
 }
 
 // ────────────────────────────────────────────────────────────────────

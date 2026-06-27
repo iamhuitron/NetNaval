@@ -7,13 +7,13 @@ export function Battle() {
   if (!session) return null
 
   const { playerBoard, cpuBoard, currentTurn, lastPlayerShot, lastCPUShot } = session
-  const isLAN     = mode?.startsWith('lan') ?? false
+  const isLAN     = (mode?.startsWith('lan') || mode?.startsWith('online')) ?? false
   const isMyTurn  = currentTurn === 'player' && !loading
 
   const turnLabel = isMyTurn
     ? 'TU TURNO — selecciona un objetivo'
     : loading ? 'Procesando…'
-    : isLAN ? 'Turno del oponente' : 'Turno de la CPU'
+    : isLAN ? 'Turno del oponente' : 'Turno de la CPU — la CPU está calculando'
 
   const shotSummary = (
     hit:  boolean | undefined,
@@ -88,7 +88,7 @@ export function Battle() {
         {/* Tablero enemigo */}
         <div className="flex-1 flex flex-col items-center justify-center gap-3 px-4">
           <p className="text-[9px] uppercase tracking-[0.25em] text-slate-600 font-mono">
-            {isLAN ? 'Flota del rival' : 'Flota enemiga'}
+            {isLAN ? 'Flota del rival' : 'Flota de la CPU'}
           </p>
           <Board
             cells={cpuBoard.cells}

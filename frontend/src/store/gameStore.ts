@@ -1,35 +1,44 @@
 import { create } from 'zustand'
-import type { SessionState, Difficulty, GameMode } from '../types'
+import type { SessionState, Difficulty, GameMode, OnlineHostResult } from '../types'
 import * as w from '../lib/wails'
 
+
 interface GameStore {
-  session:     SessionState | null
-  mode:        GameMode | null
-  loading:     boolean
-  error:       string | null
-  lanIP:       string | null
-  lanMyReady:  boolean      // jugador LAN pulsó "Listo", esperando al rival
+  session:          SessionState | null
+  mode:             GameMode | null
+  loading:          boolean
+  error:            string | null
+  // LAN
+  lanIP:            string | null
+  lanMyReady:       boolean
+  // Online
+  onlineResult:     OnlineHostResult | null
 
-  startSolo:    (d: Difficulty) => Promise<void>
-  hostLan:      () => Promise<void>
-  joinLan:      (ip: string) => Promise<void>
+  // ── Menú ──────────────────────────────────────────────────────────
+  startSolo:        (d: Difficulty) => Promise<void>
+  hostLan:          () => Promise<void>
+  joinLan:          (ip: string) => Promise<void>
+  hostOnline:       () => Promise<void>
+  joinOnline:       (code: string) => Promise<void>
 
-  placeShip:    (i: number, x: number, y: number, h: boolean) => Promise<void>
-  removeShip:   (i: number) => Promise<void>
-  autoPlace:    () => Promise<void>
-  readyOrStart: () => Promise<void>
+  // ── Colocación (modo agnóstico) ───────────────────────────────────
+  placeShip:        (i: number, x: number, y: number, h: boolean) => Promise<void>
+  removeShip:       (i: number) => Promise<void>
+  autoPlace:        () => Promise<void>
+  readyOrStart:     () => Promise<void>
 
-  fire:         (x: number, y: number) => Promise<void>
+  // ── Batalla ───────────────────────────────────────────────────────
+  fire:             (x: number, y: number) => Promise<void>
 
-  // Llamado por el listener de eventos lan:state
-  setSession:   (s: SessionState) => void
+  // ── LAN events ────────────────────────────────────────────────────
+  setSession:       (s: SessionState) => void
 
-  reset:        () => void
-  clearError:   () => void
+  // ── Control ───────────────────────────────────────────────────────
+  reset:            () => void
+  clearError:       () => void
 }
 
-// ── Helper interno ────────────────────────────────────────────────────
-async function call(
+async function apiCall(
   set: (p: Partial<GameStore>) => void,
   fn: () => Promise<SessionState>
 ) {
@@ -43,17 +52,18 @@ async function call(
 }
 
 export const useGameStore = create<GameStore>((set, get) => ({
-  session:    null,
-  mode:       null,
-  loading:    false,
-  error:      null,
-  lanIP:      null,
-  lanMyReady: false,
+  session:      null,
+  mode:         null,
+  loading:      false,
+  error:        null,
+  lanIP:        null,
+  lanMyReady:   false,
+  onlineResult: null,
 
-  // ── Menú ─────────────────────────────────────────────────────────
+  // ── Menú ──────────────────────────────────────────────────────────
 
   startSolo: async (d) => {
-    set({ loading: true, error: null, mode: 'solo', lanMyReady: false })
+    set({ loading: true, error: null, mode: 'solo', lanMyReady: false, onlineResult: null })
     try {
       const session = await w.newGame(d)
       set({ session, loading: false })
@@ -61,7 +71,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   hostLan: async () => {
-    set({ loading: true, error: null, lanMyReady: false })
+    set({ loading: true, error: null, lanMyReady: false, onlineResult: null })
     try {
       const ip = await w.hostLanGame()
       set({ mode: 'lan_host', lanIP: ip, loading: false, session: null })
@@ -69,10 +79,26 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   joinLan: async (ip) => {
-    set({ loading: true, error: null, lanMyReady: false })
+    set({ loading: true, error: null, lanMyReady: false, onlineResult: null })
     try {
       const session = await w.joinLanGame(ip)
       set({ mode: 'lan_client', session, loading: false })
+    } catch (e) { set({ error: String(e), loading: false }) }
+  },
+
+  hostOnline: async () => {
+    set({ loading: true, error: null, lanMyReady: false, onlineResult: null })
+    try {
+      const result = await w.hostOnlineGame()
+      set({ mode: 'online_host', onlineResult: result, loading: false, session: null })
+    } catch (e) { set({ error: String(e), loading: false }) }
+  },
+
+  joinOnline: async (code) => {
+    set({ loading: true, error: null, lanMyReady: false })
+    try {
+      const session = await w.joinOnlineGame(code)
+      set({ mode: 'online_client', session, loading: false })
     } catch (e) { set({ error: String(e), loading: false }) }
   },
 
@@ -80,17 +106,23 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   placeShip: (i, x, y, h) => {
     const m = get().mode
-    return call(set, () => m === 'solo' ? w.placeShip(i, x, y, h) : w.lanPlaceShip(i, x, y, h))
+    return apiCall(set, () =>
+      m === 'solo' ? w.placeShip(i, x, y, h) : w.lanPlaceShip(i, x, y, h)
+    )
   },
 
   removeShip: (i) => {
     const m = get().mode
-    return call(set, () => m === 'solo' ? w.removeShip(i) : w.lanRemoveShip(i))
+    return apiCall(set, () =>
+      m === 'solo' ? w.removeShip(i) : w.lanRemoveShip(i)
+    )
   },
 
   autoPlace: () => {
     const m = get().mode
-    return call(set, () => m === 'solo' ? w.autoPlace() : w.lanAutoPlace())
+    return apiCall(set, () =>
+      m === 'solo' ? w.autoPlace() : w.lanAutoPlace()
+    )
   },
 
   readyOrStart: async () => {
@@ -117,16 +149,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
         const session = await w.playerFire(x, y)
         set({ session })
       } else {
-        // lanFire ahora devuelve el estado con currentTurn="cpu" inmediatamente
         const session = await w.lanFire(x, y)
         set({ session })
-        // El resultado definitivo llega por el evento lan:state (onLanState → setSession)
       }
     } catch (e) { set({ error: String(e) }) }
   },
 
   setSession: (session) => set({ session }),
 
-  reset:      () => set({ session: null, mode: null, error: null, lanIP: null, lanMyReady: false }),
+  reset: () => set({
+    session: null, mode: null, error: null,
+    lanIP: null, lanMyReady: false, onlineResult: null,
+  }),
   clearError: () => set({ error: null }),
 }))
