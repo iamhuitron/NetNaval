@@ -21,9 +21,13 @@ type App struct {
 	// ── Modo Solo (vs CPU) ──────────────────────────────────────────
 	session *game.Session
 
-	// ── Modo LAN ────────────────────────────────────────────────────
+	// ── Modo LAN / Online ────────────────────────────────────────────
 	lanSession *game.LANSession
 	lanMgr     *network.Manager
+
+	// ── LAN auto-discovery ───────────────────────────────────────────
+	broadcaster *network.Broadcaster
+	scanner     *network.Scanner
 }
 
 func NewApp() *App { return &App{} }
@@ -36,8 +40,11 @@ func (a *App) startup(ctx context.Context) { a.ctx = ctx }
 
 func (a *App) NewGame(difficulty int) game.SessionState {
 	d := game.Easy
-	if difficulty == 1 {
+	switch difficulty {
+	case 1:
 		d = game.Medium
+	case 2:
+		d = game.Hard
 	}
 	a.session = game.NewSession(d)
 	a.lanSession = nil
@@ -45,6 +52,7 @@ func (a *App) NewGame(difficulty int) game.SessionState {
 		a.lanMgr.Close()
 		a.lanMgr = nil
 	}
+	a.stopDiscovery()
 	return a.session.State()
 }
 
@@ -142,11 +150,13 @@ func (a *App) SendChatMessage(sender, content string) {
 // MODO LAN
 // ────────────────────────────────────────────────────────────────────
 
-// HostLanGame inicia un servidor TCP y devuelve la IP local del host.
+// HostLanGame inicia un servidor TCP, arranca el broadcast UDP y devuelve la IP local.
 func (a *App) HostLanGame() (string, error) {
 	if a.lanMgr != nil {
 		a.lanMgr.Close()
 	}
+	a.stopDiscovery()
+
 	mgr, err := network.NewHost()
 	if err != nil {
 		return "", err
@@ -155,25 +165,35 @@ func (a *App) HostLanGame() (string, error) {
 	a.lanSession = game.NewLANSession()
 	a.session = nil
 
+	localIP := network.LocalIP()
+
+	// Anunciar partida por UDP broadcast para autodescubrimiento
+	if b, err := network.NewBroadcaster(localIP, "Partida LAN"); err == nil {
+		a.broadcaster = b
+		b.Start()
+	}
+
 	mgr.OnConnect = func() {
 		runtime.EventsEmit(a.ctx, "lan:connected")
-		// Enviar el estado inicial para que el host transite a Placement
 		runtime.EventsEmit(a.ctx, "lan:state", a.lanSession.State())
 		a.emitEvent("✅ Oponente conectado. Coloca tus barcos.")
+		// Dejar de anunciar cuando hay oponente
+		if a.broadcaster != nil {
+			a.broadcaster.Stop()
+			a.broadcaster = nil
+		}
 	}
 	mgr.OnMessage = a.handleLanMessage
 	mgr.OnDisconnect = func(e error) {
 		runtime.EventsEmit(a.ctx, "lan:disconnected")
 		a.emitEvent("⚠ Oponente desconectado.")
 	}
-
 	go func() {
 		if err := mgr.WaitForClient(); err != nil {
 			runtime.EventsEmit(a.ctx, "lan:error", err.Error())
 		}
 	}()
-
-	return network.LocalIP(), nil
+	return localIP, nil
 }
 
 // JoinLanGame conecta a un host y devuelve el estado inicial.
@@ -479,6 +499,57 @@ func (a *App) startLanBattle() {
 	a.emitEvent("⚓ ¡La batalla ha comenzado! Eres el primero en disparar.")
 	runtime.EventsEmit(a.ctx, "lan:state", a.lanSession.State())
 	runtime.EventsEmit(a.ctx, "lan:battle_start", nil)
+}
+
+
+// ────────────────────────────────────────────────────────────────────
+// LAN AUTO-DISCOVERY
+// ────────────────────────────────────────────────────────────────────
+
+// StartLANScan arranca el escáner UDP para encontrar partidas en la red local.
+// Cada vez que aparece una partida nueva, emite el evento "discovery:games"
+// con la lista actualizada.
+func (a *App) StartLANScan() {
+	if a.scanner != nil {
+		a.scanner.Stop()
+	}
+	s, err := network.NewScanner()
+	if err != nil {
+		return
+	}
+	a.scanner = s
+	s.OnUpdate = func(games []network.DiscoveredGame) {
+		runtime.EventsEmit(a.ctx, "discovery:games", games)
+	}
+	s.Start()
+}
+
+// StopLANScan detiene el escáner UDP.
+func (a *App) StopLANScan() {
+	if a.scanner != nil {
+		a.scanner.Stop()
+		a.scanner = nil
+	}
+}
+
+// GetDiscoveredGames devuelve la lista actual de partidas LAN encontradas.
+func (a *App) GetDiscoveredGames() []network.DiscoveredGame {
+	if a.scanner == nil {
+		return nil
+	}
+	return a.scanner.Games()
+}
+
+// stopDiscovery detiene tanto broadcaster como scanner.
+func (a *App) stopDiscovery() {
+	if a.broadcaster != nil {
+		a.broadcaster.Stop()
+		a.broadcaster = nil
+	}
+	if a.scanner != nil {
+		a.scanner.Stop()
+		a.scanner = nil
+	}
 }
 
 func (a *App) emitEvent(content string) {

@@ -29,3 +29,9 @@ export interface OnlineHostResult {
   upnpSuccess: boolean
   upnpError?:  string
 }
+
+export interface DiscoveredGame {
+  name: string
+  ip:   string
+  port: number
+}

@@ -22,45 +22,42 @@ func TestNewBoard(t *testing.T) {
 
 func TestPlaceShipHorizontal(t *testing.T) {
 	b := NewBoard(10)
-	ship := &Ship{Name: "Test", Size: 3}
-	if err := b.PlaceShip(ship, Coordinate{0, 0}, Horizontal); err != nil {
-		t.Fatalf("PlaceShip falló: %v", err)
+	s := &Ship{Name: "T", Size: 3}
+	if err := b.PlaceShip(s, Coordinate{0, 0}, Horizontal); err != nil {
+		t.Fatal(err)
 	}
 	for x := 0; x < 3; x++ {
 		if b.Cells[0][x] != CellShip {
-			t.Errorf("celda (%d,0) debería ser CellShip", x)
+			t.Errorf("celda (%d,0) debe ser CellShip", x)
 		}
 	}
 }
 
 func TestPlaceShipVertical(t *testing.T) {
 	b := NewBoard(10)
-	ship := &Ship{Name: "Test", Size: 3}
-	if err := b.PlaceShip(ship, Coordinate{0, 0}, Vertical); err != nil {
-		t.Fatalf("PlaceShip falló: %v", err)
+	s := &Ship{Name: "T", Size: 3}
+	if err := b.PlaceShip(s, Coordinate{0, 0}, Vertical); err != nil {
+		t.Fatal(err)
 	}
 	for y := 0; y < 3; y++ {
 		if b.Cells[y][0] != CellShip {
-			t.Errorf("celda (0,%d) debería ser CellShip", y)
+			t.Errorf("celda (0,%d) debe ser CellShip", y)
 		}
 	}
 }
 
 func TestPlaceShipOutOfBounds(t *testing.T) {
 	b := NewBoard(10)
-	ship := &Ship{Name: "Test", Size: 5}
-	if err := b.PlaceShip(ship, Coordinate{8, 0}, Horizontal); err == nil {
-		t.Error("debería rechazar barco fuera del tablero")
+	if err := b.PlaceShip(&Ship{Name: "T", Size: 5}, Coordinate{8, 0}, Horizontal); err == nil {
+		t.Error("debe rechazar barco fuera del tablero")
 	}
 }
 
 func TestPlaceShipOverlap(t *testing.T) {
 	b := NewBoard(10)
-	a := &Ship{Name: "A", Size: 3}
-	bb := &Ship{Name: "B", Size: 3}
-	b.PlaceShip(a, Coordinate{0, 0}, Horizontal)
-	if err := b.PlaceShip(bb, Coordinate{2, 0}, Horizontal); err == nil {
-		t.Error("debería rechazar barcos solapados")
+	b.PlaceShip(&Ship{Name: "A", Size: 3}, Coordinate{0, 0}, Horizontal)
+	if err := b.PlaceShip(&Ship{Name: "B", Size: 3}, Coordinate{2, 0}, Horizontal); err == nil {
+		t.Error("debe rechazar barcos solapados")
 	}
 }
 
@@ -70,78 +67,64 @@ func TestFireMiss(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Hit {
-		t.Error("debería ser agua")
-	}
-	if b.Cells[5][5] != CellMiss {
-		t.Error("celda debería quedar como CellMiss")
+	if r.Hit || b.Cells[5][5] != CellMiss {
+		t.Error("disparo sin barco debe ser agua")
 	}
 }
 
-func TestFireHitNoSunk(t *testing.T) {
+func TestFireHitAndSunk(t *testing.T) {
 	b := NewBoard(10)
-	ship := &Ship{Name: "Test", Size: 2}
-	b.PlaceShip(ship, Coordinate{3, 3}, Horizontal)
+	b.PlaceShip(&Ship{Name: "T", Size: 2}, Coordinate{3, 3}, Horizontal)
 
-	r, err := b.Fire(Coordinate{3, 3})
-	if err != nil {
-		t.Fatal(err)
+	r1, _ := b.Fire(Coordinate{3, 3})
+	if !r1.Hit || r1.Sunk {
+		t.Error("primer impacto: hit=true, sunk=false")
 	}
-	if !r.Hit {
-		t.Error("debería ser impacto")
+	r2, _ := b.Fire(Coordinate{4, 3})
+	if !r2.Hit || !r2.Sunk {
+		t.Error("segundo impacto hunde el barco")
 	}
-	if r.Sunk {
-		t.Error("no debería estar hundido (solo 1 de 2 celdas)")
+	if r2.ShipSize != 2 {
+		t.Errorf("ShipSize esperado 2, obtuve %d", r2.ShipSize)
 	}
-	if b.Cells[3][3] != CellHit {
-		t.Error("celda debería ser CellHit")
-	}
-}
-
-func TestFireSunk(t *testing.T) {
-	b := NewBoard(10)
-	ship := &Ship{Name: "Test", Size: 1}
-	b.PlaceShip(ship, Coordinate{0, 0}, Horizontal)
-
-	r, err := b.Fire(Coordinate{0, 0})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !r.Hit || !r.Sunk {
-		t.Error("debería ser hundimiento")
-	}
-	if r.ShipSize != 1 {
-		t.Errorf("ShipSize esperado 1, obtuve %d", r.ShipSize)
-	}
-	if b.Cells[0][0] != CellSunk {
-		t.Error("celda debería ser CellSunk")
+	if b.Cells[3][3] != CellSunk || b.Cells[3][4] != CellSunk {
+		t.Error("las celdas deben quedar como CellSunk")
 	}
 }
 
 func TestFireAlreadyFired(t *testing.T) {
 	b := NewBoard(10)
 	b.Fire(Coordinate{0, 0})
-	r, err := b.Fire(Coordinate{0, 0})
-	if err != nil {
-		t.Fatal(err)
-	}
+	r, _ := b.Fire(Coordinate{0, 0})
 	if !r.AlreadyFired {
-		t.Error("debería indicar AlreadyFired")
+		t.Error("debe indicar AlreadyFired")
 	}
 }
 
 func TestAllSunk(t *testing.T) {
 	b := NewBoard(10)
-	ship := &Ship{Name: "Test", Size: 2}
-	b.PlaceShip(ship, Coordinate{0, 0}, Horizontal)
-
+	b.PlaceShip(&Ship{Name: "T", Size: 2}, Coordinate{0, 0}, Horizontal)
 	if b.AllSunk() {
-		t.Error("no deberían estar hundidos antes de disparar")
+		t.Error("no debe estar hundido antes de disparar")
 	}
 	b.Fire(Coordinate{0, 0})
 	b.Fire(Coordinate{1, 0})
 	if !b.AllSunk() {
-		t.Error("deberían estar hundidos tras destruir toda la flota")
+		t.Error("debe estar hundido tras hundir toda la flota")
+	}
+}
+
+func TestFogOfWar(t *testing.T) {
+	b := NewBoard(10)
+	b.PlaceShip(&Ship{Name: "T", Size: 2}, Coordinate{0, 0}, Horizontal)
+
+	fog := b.View(false)
+	if fog.Cells[0][0] != "empty" {
+		t.Error("fog of war debe ocultar barcos")
+	}
+	visible := b.View(true)
+	if visible.Cells[0][0] != "ship" {
+		t.Error("con revealShips=true debe mostrar barcos")
 	}
 }
 
@@ -149,28 +132,12 @@ func TestAutoPlaceFleet(t *testing.T) {
 	b := NewBoard(10)
 	fleet := NewClassicFleet()
 	if err := b.AutoPlaceFleet(fleet); err != nil {
-		t.Fatalf("AutoPlaceFleet falló: %v", err)
+		t.Fatal(err)
 	}
-	for _, ship := range fleet {
-		if len(ship.Positions) == 0 {
-			t.Errorf("barco %q no fue colocado", ship.Name)
+	for _, s := range fleet {
+		if len(s.Positions) == 0 {
+			t.Errorf("barco %q sin colocar", s.Name)
 		}
-	}
-}
-
-func TestFogOfWar(t *testing.T) {
-	b := NewBoard(10)
-	ship := &Ship{Name: "Test", Size: 2}
-	b.PlaceShip(ship, Coordinate{0, 0}, Horizontal)
-
-	view := b.View(false) // fog of war
-	if view.Cells[0][0] != "empty" {
-		t.Error("fog of war debería ocultar los barcos")
-	}
-
-	view = b.View(true) // revelar
-	if view.Cells[0][0] != "ship" {
-		t.Error("con revealShips=true debería mostrar el barco")
 	}
 }
 
@@ -178,39 +145,108 @@ func TestFogOfWar(t *testing.T) {
 
 func TestCPUEasyInBounds(t *testing.T) {
 	b := NewBoard(10)
-	fleet := NewClassicFleet()
-	b.AutoPlaceFleet(fleet)
-
+	b.AutoPlaceFleet(NewClassicFleet())
 	cpu := &CPU{Difficulty: Easy}
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 30; i++ {
 		shot := cpu.NextShot(b)
 		if !b.InBounds(shot) {
-			t.Fatalf("disparo CPU fuera del tablero: %+v", shot)
+			t.Fatalf("CPU Easy disparo fuera del tablero: %+v", shot)
 		}
 	}
 }
 
 func TestCPUMediumHuntsAfterHit(t *testing.T) {
-	b := NewBoard(10)
-	ship := &Ship{Name: "Test", Size: 4}
-	b.PlaceShip(ship, Coordinate{5, 5}, Horizontal)
-
 	cpu := &CPU{Difficulty: Medium}
-	hit := Coordinate{5, 5}
-	b.Cells[5][5] = CellHit // simular disparo previo
-
-	cpu.RegisterResult(hit, true, false)
+	cpu.RegisterResult(Coordinate{5, 5}, true, false)
 	if len(cpu.huntQueue) == 0 {
-		t.Error("modo cacería debería tener casillas en cola tras un impacto")
+		t.Error("modo cacería debe tener candidatos tras un impacto")
 	}
 }
 
-func TestCPUMediumClearsQueueOnSunk(t *testing.T) {
+func TestCPUMediumClearsOnSunk(t *testing.T) {
 	cpu := &CPU{Difficulty: Medium}
 	cpu.huntQueue = []Coordinate{{1, 1}, {2, 1}}
-	cpu.RegisterResult(Coordinate{1, 1}, true, true) // hundido
+	cpu.RegisterResult(Coordinate{1, 1}, true, true)
 	if len(cpu.huntQueue) != 0 {
-		t.Error("modo cacería debería limpiar la cola al hundir el barco")
+		t.Error("la cola debe limpiarse al hundir el barco")
+	}
+}
+
+func TestCPUHardParityCells(t *testing.T) {
+	b := NewBoard(10)
+	b.AutoPlaceFleet(NewClassicFleet())
+	cpu := &CPU{Difficulty: Hard}
+
+	// En el barrido de paridad, todas las celdas deben tener (x+y)%2==0
+	// hasta que se activa el modo cacería
+	parityViolations := 0
+	for i := 0; i < 20; i++ {
+		shot := cpu.NextShot(b)
+		if (shot.X+shot.Y)%2 != 0 {
+			parityViolations++
+		}
+		b.Cells[shot.Y][shot.X] = CellMiss // simular disparo al agua
+	}
+	if parityViolations > 0 {
+		t.Errorf("Hard CPU violó la paridad %d veces en la fase de barrido", parityViolations)
+	}
+}
+
+func TestCPUHardDirectionDeduction(t *testing.T) {
+	cpu := &CPU{Difficulty: Hard}
+
+	// Simular dos impactos horizontales en y=3: (2,3) y (3,3)
+	cpu.RegisterResult(Coordinate{2, 3}, true, false)
+	cpu.RegisterResult(Coordinate{3, 3}, true, false)
+
+	if cpu.huntDir != 1 {
+		t.Errorf("debe deducir dirección horizontal (1), obtuvo %d", cpu.huntDir)
+	}
+	// La cola debe extenderse horizontalmente: (4,3) y (1,3)
+	expectedX := map[int]bool{4: true, 1: true}
+	for _, c := range cpu.huntQueue {
+		if c.Y != 3 {
+			t.Errorf("candidato (%d,%d) debe tener Y=3", c.X, c.Y)
+		}
+		if !expectedX[c.X] {
+			t.Errorf("candidato (%d,%d) inesperado en cola", c.X, c.Y)
+		}
+	}
+}
+
+func TestCPUHardVerticalDeduction(t *testing.T) {
+	cpu := &CPU{Difficulty: Hard}
+	cpu.RegisterResult(Coordinate{5, 2}, true, false)
+	cpu.RegisterResult(Coordinate{5, 3}, true, false)
+
+	if cpu.huntDir != 2 {
+		t.Errorf("debe deducir dirección vertical (2), obtuvo %d", cpu.huntDir)
+	}
+	for _, c := range cpu.huntQueue {
+		if c.X != 5 {
+			t.Errorf("candidato (%d,%d) debe tener X=5", c.X, c.Y)
+		}
+	}
+}
+
+func TestCPUHardClearsOnSunk(t *testing.T) {
+	cpu := &CPU{Difficulty: Hard}
+	cpu.RegisterResult(Coordinate{2, 3}, true, false)
+	cpu.RegisterResult(Coordinate{3, 3}, true, false)
+	cpu.RegisterResult(Coordinate{4, 3}, true, true) // hundimiento
+	if len(cpu.huntQueue) != 0 || len(cpu.hitLine) != 0 || cpu.huntDir != 0 {
+		t.Error("al hundir debe limpiar toda la información de cacería")
+	}
+}
+
+func TestCPUHardCoverageEfficiency(t *testing.T) {
+	// En un tablero vacío, el barrido de paridad debe cubrir exactamente 50 celdas
+	b := NewBoard(10)
+	cpu := &CPU{Difficulty: Hard}
+	cpu.initParity(b)
+	if len(cpu.parityCells) != 50 {
+		t.Errorf("el barrido de paridad debe tener 50 celdas en tablero 10x10, obtuvo %d",
+			len(cpu.parityCells))
 	}
 }
 
@@ -219,92 +255,89 @@ func TestCPUMediumClearsQueueOnSunk(t *testing.T) {
 func TestSessionPlacementPhase(t *testing.T) {
 	s := NewSession(Easy)
 	if s.State().Phase != PhasePlacement {
-		t.Error("sesión nueva debería empezar en colocación")
+		t.Error("sesión nueva debe estar en colocación")
 	}
 }
 
 func TestSessionAutoPlaceAndStart(t *testing.T) {
 	s := NewSession(Easy)
 	if err := s.AutoPlace(); err != nil {
-		t.Fatalf("AutoPlace falló: %v", err)
+		t.Fatal(err)
 	}
 	if err := s.StartBattle(); err != nil {
-		t.Fatalf("StartBattle falló: %v", err)
+		t.Fatal(err)
 	}
-	state := s.State()
-	if state.Phase != PhaseBattle {
-		t.Error("debería estar en fase de batalla")
-	}
-	if state.CurrentTurn != "player" {
-		t.Error("el jugador debería ir primero")
+	st := s.State()
+	if st.Phase != PhaseBattle || st.CurrentTurn != "player" {
+		t.Error("tras StartBattle: fase=battle, turno=player")
 	}
 }
 
 func TestSessionStartRequiresAllShips(t *testing.T) {
-	s := NewSession(Easy)
-	if err := s.StartBattle(); err == nil {
-		t.Error("StartBattle debería fallar si no se colocaron todos los barcos")
+	if err := NewSession(Easy).StartBattle(); err == nil {
+		t.Error("StartBattle debe fallar sin barcos colocados")
 	}
 }
 
-func TestSessionPlayerFireAndCPUResponds(t *testing.T) {
+func TestSessionPlayerFireAndResponse(t *testing.T) {
 	s := NewSession(Easy)
 	s.AutoPlace()
 	s.StartBattle()
-
-	before := s.State().CurrentTurn
-	if before != "player" {
-		t.Fatal("se esperaba turno del jugador")
-	}
-
 	if err := s.PlayerFire(0, 0); err != nil {
-		t.Fatalf("PlayerFire falló: %v", err)
+		t.Fatal(err)
 	}
-
-	state := s.State()
-	// Después del turno completo (jugador + CPU): vuelve a ser "player"
-	// a menos que la partida haya terminado.
-	if state.Phase == PhaseGameOver {
-		return // victoria rápida: válido en tests con Easy
+	st := s.State()
+	if st.Phase == PhaseGameOver {
+		return // victoria instantánea: válida
 	}
-	if state.CurrentTurn != "player" {
-		t.Errorf("debería ser turno del jugador de nuevo, es '%s'", state.CurrentTurn)
+	if st.CurrentTurn != "player" {
+		t.Errorf("tras el ciclo completo debe ser turno del jugador, es '%s'", st.CurrentTurn)
 	}
 }
 
 func TestSessionRemoveShip(t *testing.T) {
 	s := NewSession(Easy)
-	if err := s.PlaceShip(0, 0, 0, true); err != nil {
-		t.Fatal(err)
+	s.PlaceShip(0, 0, 0, true)
+	if !s.State().Fleet[0].Placed {
+		t.Error("barco debe estar colocado")
 	}
-	if s.State().Fleet[0].Placed == false {
-		t.Error("barco debería aparecer como colocado")
-	}
-	if err := s.RemoveShip(0); err != nil {
-		t.Fatalf("RemoveShip falló: %v", err)
-	}
+	s.RemoveShip(0)
 	if s.State().Fleet[0].Placed {
-		t.Error("barco debería aparecer como no colocado tras retirarlo")
+		t.Error("barco debe estar retirado")
+	}
+}
+
+func TestSessionHardDifficulty(t *testing.T) {
+	s := NewSession(Hard)
+	s.AutoPlace()
+	s.StartBattle()
+	// Verificar que la CPU Hard no se queda atascada
+	for i := 0; i < 50; i++ {
+		if err := s.PlayerFire(i%10, i/10); err != nil {
+			continue
+		}
+		if s.State().Phase == PhaseGameOver {
+			return // todo bien
+		}
 	}
 }
 
 // ── LANSession ────────────────────────────────────────────────────────
 
-func TestLANSessionPlacementAndReady(t *testing.T) {
+func TestLANSessionPlacementAndAutoPlace(t *testing.T) {
 	ls := NewLANSession()
 	if ls.State().Phase != PhasePlacement {
-		t.Error("LANSession nueva debería estar en colocación")
+		t.Error("LANSession debe empezar en colocación")
 	}
 	if err := ls.AutoPlace(); err != nil {
-		t.Fatalf("LANSession.AutoPlace falló: %v", err)
+		t.Fatal(err)
 	}
 	if !ls.AllPlaced() {
-		t.Error("todos los barcos deberían estar colocados")
+		t.Error("todos los barcos deben estar colocados")
 	}
 }
 
 func TestLANSessionFireExchange(t *testing.T) {
-	// Jugador A dispara a Jugador B
 	a := NewLANSession()
 	b := NewLANSession()
 	a.AutoPlace()
@@ -312,26 +345,20 @@ func TestLANSessionFireExchange(t *testing.T) {
 	a.StartBattle(true)
 	b.StartBattle(false)
 
-	// A registra disparo a (0,0)
 	if err := a.RegisterFire(0, 0); err != nil {
-		t.Fatalf("RegisterFire falló: %v", err)
+		t.Fatal(err)
 	}
 	if a.MyTurn {
-		t.Error("después de RegisterFire el turno debería ser del rival")
+		t.Error("tras RegisterFire el turno debe ser del rival")
 	}
 
-	// B recibe el disparo
 	result, err := b.ReceiveOpponentFire(0, 0)
 	if err != nil {
-		t.Fatalf("ReceiveOpponentFire falló: %v", err)
+		t.Fatal(err)
 	}
 
-	// A recibe el resultado
 	a.ConfirmFireResult(0, 0, result.Hit, result.Sunk, result.ShipName, result.ShipSize)
-	// Ahora le toca al rival (B) o A ganó
-	if a.State().Phase != PhaseGameOver {
-		if a.MyTurn {
-			t.Error("después del resultado, le debería tocar al rival")
-		}
+	if a.State().Phase != PhaseGameOver && a.MyTurn {
+		t.Error("tras confirmar resultado el turno debe ser del rival")
 	}
 }

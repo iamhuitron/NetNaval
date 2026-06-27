@@ -1,4 +1,6 @@
-import type { SessionState, ChatMessage, OnlineHostResult } from '../types'
+import type {
+  SessionState, ChatMessage, OnlineHostResult, DiscoveredGame
+} from '../types'
 
 interface WailsApp {
   // Solo
@@ -23,6 +25,10 @@ interface WailsApp {
   // Online
   HostOnlineGame(): Promise<OnlineHostResult>
   JoinOnlineGame(code: string): Promise<SessionState>
+  // Discovery
+  StartLANScan(): Promise<void>
+  StopLANScan(): Promise<void>
+  GetDiscoveredGames(): Promise<DiscoveredGame[]>
 }
 
 interface WailsRuntime {
@@ -49,7 +55,7 @@ const rt = (): WailsRuntime => {
 }
 
 // ── Solo ─────────────────────────────────────────────────────────────
-export const newGame     = (d: 0 | 1)                                    => api().NewGame(d)
+export const newGame     = (d: 0 | 1 | 2)                                => api().NewGame(d)
 export const placeShip   = (i: number, x: number, y: number, h: boolean) => api().PlaceShip(i, x, y, h)
 export const removeShip  = (i: number)                                    => api().RemoveShip(i)
 export const autoPlace   = ()                                             => api().AutoPlace()
@@ -68,12 +74,29 @@ export const lanFire       = (x: number, y: number): Promise<SessionState> => ap
 export const lanSendChat   = (c: string)                                    => api().LanSendChat(c)
 
 // ── Online ───────────────────────────────────────────────────────────
-export const hostOnlineGame  = ()              => api().HostOnlineGame()
-export const joinOnlineGame  = (code: string)  => api().JoinOnlineGame(code)
+export const hostOnlineGame = ()             => api().HostOnlineGame()
+export const joinOnlineGame = (code: string) => api().JoinOnlineGame(code)
+
+// ── Discovery ────────────────────────────────────────────────────────
+export const startLANScan       = () => api().StartLANScan()
+export const stopLANScan        = () => api().StopLANScan()
+export const getDiscoveredGames = () => api().GetDiscoveredGames()
 
 // ── Eventos ──────────────────────────────────────────────────────────
-export const onChatMessage     = (cb: (m: ChatMessage)  => void) => rt().EventsOn('chat:message',    m => cb(m as ChatMessage))
-export const onLanState        = (cb: (s: SessionState) => void) => rt().EventsOn('lan:state',       s => cb(s as SessionState))
-export const onLanConnected    = (cb: () => void)                => rt().EventsOn('lan:connected',    cb)
-export const onLanBattleStart  = (cb: () => void)                => rt().EventsOn('lan:battle_start', cb)
-export const onLanDisconnected = (cb: () => void)                => rt().EventsOn('lan:disconnected', cb)
+export const onChatMessage     = (cb: (m: ChatMessage)      => void) =>
+  rt().EventsOn('chat:message',    m  => cb(m as ChatMessage))
+
+export const onLanState        = (cb: (s: SessionState)     => void) =>
+  rt().EventsOn('lan:state',       s  => cb(s as SessionState))
+
+export const onLanConnected    = (cb: () => void) =>
+  rt().EventsOn('lan:connected',   cb)
+
+export const onLanBattleStart  = (cb: () => void) =>
+  rt().EventsOn('lan:battle_start', cb)
+
+export const onLanDisconnected = (cb: () => void) =>
+  rt().EventsOn('lan:disconnected', cb)
+
+export const onDiscoveryGames  = (cb: (g: DiscoveredGame[]) => void) =>
+  rt().EventsOn('discovery:games', g => cb(g as DiscoveredGame[]))
