@@ -23,38 +23,58 @@ type ShipInfo struct {
 // tras cada acción. La CPU reacciona dentro del mismo ciclo que el
 // jugador, de modo que el frontend siempre recibe el estado final.
 type SessionState struct {
-	Phase          Phase      `json:"phase"`
-	PlayerBoard    BoardView  `json:"playerBoard"`
-	CPUBoard       BoardView  `json:"cpuBoard"`
-	CurrentTurn    string     `json:"currentTurn"` // "player" | "cpu"
-	Winner         string     `json:"winner"`       // "" | "player" | "cpu"
-	Fleet          []ShipInfo `json:"fleet"`
-	LastPlayerShot *FireResult `json:"lastPlayerShot,omitempty"`
-	LastCPUShot    *FireResult `json:"lastCPUShot,omitempty"`
+	Phase          Phase          `json:"phase"`
+	PlayerBoard    BoardView      `json:"playerBoard"`
+	CPUBoard       BoardView      `json:"cpuBoard"`
+	CurrentTurn    string         `json:"currentTurn"`
+	Winner         string         `json:"winner"`
+	Fleet          []ShipInfo     `json:"fleet"`
+	Captain        CaptainProfile `json:"captain"`
+	SmokeScreen    int            `json:"smokeScreen"`
+	LastPlayerShot *FireResult    `json:"lastPlayerShot,omitempty"`
+	LastCPUShot    *FireResult    `json:"lastCPUShot,omitempty"`
 }
 
 // Session orquesta una partida completa entre el jugador y la CPU.
 type Session struct {
-	playerBoard    *Board
-	cpuBoard       *Board
-	cpu            *CPU
-	fleet          []*Ship // flota del jugador
-	phase          Phase
-	currentTurn    string
-	winner         string
+	playerBoard *Board
+	cpuBoard    *Board
+	cpu         *CPU
+	fleet       []*Ship
+	phase       Phase
+	currentTurn string
+	winner      string
+
+	// Capitanes
+	playerCaptain CaptainProfile
+	cpuCaptain    CaptainProfile   // siempre Drake (sin habilidades activas para la CPU)
+
+	// Cortina de humo: turnos restantes en que la CPU dispara aleatorio
+	smokeScreenTurns int
+
+	// Historial de disparos del jugador para analítica
+	shotHistory []ShotRecord
+	turnCount   int
+
 	lastPlayerShot *FireResult
 	lastCPUShot    *FireResult
 }
 
-// NewSession crea una sesión nueva con la dificultad de CPU indicada.
-func NewSession(difficulty Difficulty) *Session {
+// NewSession crea una sesión nueva con la dificultad de CPU y capitán dados.
+// Si captainID es CaptainNone (0) se juega sin habilidades especiales.
+func NewSession(difficulty Difficulty, captainID CaptainID) *Session {
+	captain := CaptainProfile{}
+	if captainID != CaptainNone {
+		captain, _ = FindCaptain(captainID)
+	}
 	return &Session{
-		playerBoard: NewBoard(10),
-		cpuBoard:    NewBoard(10),
-		cpu:         &CPU{Difficulty: difficulty},
-		fleet:       NewClassicFleet(),
-		phase:       PhasePlacement,
-		currentTurn: "player",
+		playerBoard:   NewBoard(10),
+		cpuBoard:      NewBoard(10),
+		cpu:           &CPU{Difficulty: difficulty},
+		fleet:         NewClassicFleet(),
+		phase:         PhasePlacement,
+		currentTurn:   "player",
+		playerCaptain: captain,
 	}
 }
 
@@ -166,6 +186,13 @@ func (s *Session) PlayerFire(x, y int) error {
 		return nil
 	}
 
+	s.turnCount++
+	s.shotHistory = append(s.shotHistory, ShotRecord{
+		X: x, Y: y,
+		Hit:  playerResult.Hit,
+		Sunk: playerResult.Sunk,
+		Turn: s.turnCount,
+	})
 	s.lastPlayerShot = &playerResult
 	s.lastCPUShot = nil
 
@@ -177,7 +204,16 @@ func (s *Session) PlayerFire(x, y int) error {
 
 	// Turno de la CPU
 	s.currentTurn = "cpu"
-	shot := s.cpu.NextShot(s.playerBoard)
+	var shot Coordinate
+	if s.smokeScreenTurns > 0 {
+		// Bajo cortina de humo: la CPU dispara aleatoriamente
+		cpuAux := &CPU{Difficulty: Easy}
+		shot = cpuAux.NextShot(s.playerBoard)
+		s.smokeScreenTurns--
+	} else {
+		shot = s.cpu.NextShot(s.playerBoard)
+	}
+
 	cpuResult, err := s.playerBoard.Fire(shot)
 	if err != nil {
 		return err
@@ -213,7 +249,69 @@ func (s *Session) State() SessionState {
 		CurrentTurn:    s.currentTurn,
 		Winner:         s.winner,
 		Fleet:          fleet,
+		Captain:        s.playerCaptain,
+		SmokeScreen:    s.smokeScreenTurns,
 		LastPlayerShot: s.lastPlayerShot,
 		LastCPUShot:    s.lastCPUShot,
 	}
+}
+
+// UseAbility ejecuta la habilidad especial del capitán del jugador.
+func (s *Session) UseAbility(x, y int) (AbilityResult, error) {
+	if s.phase != PhaseBattle {
+		return AbilityResult{}, fmt.Errorf("solo puedes usar habilidades en batalla")
+	}
+	if s.playerCaptain.ID == CaptainNone {
+		return AbilityResult{}, fmt.Errorf("no tienes capitán seleccionado")
+	}
+	ab := &s.playerCaptain.Ability
+	if ab.UsesLeft <= 0 {
+		return AbilityResult{}, fmt.Errorf("no quedan usos de %s", ab.Name)
+	}
+
+	ab.UsesLeft--
+	result := AbilityResult{AbilityName: ab.Name, UsesLeft: ab.UsesLeft}
+
+	switch s.playerCaptain.ID {
+	case CaptainDrake:
+		result.RadarHits = execRadar(s.cpuBoard, x, y)
+		result.Activated = true
+
+	case CaptainBlackwood:
+		result.LineResults = execLineShot(s.cpuBoard, y)
+		result.Activated = len(result.LineResults) > 0
+		for _, r := range result.LineResults {
+			s.turnCount++
+			s.shotHistory = append(s.shotHistory, ShotRecord{
+				X: r.Coordinate.X, Y: r.Coordinate.Y,
+				Hit: r.Hit, Sunk: r.Sunk, Turn: s.turnCount,
+			})
+		}
+		if s.cpuBoard.AllSunk() {
+			s.phase = PhaseGameOver
+			s.winner = "player"
+		}
+
+	case CaptainVoss:
+		s.smokeScreenTurns += 2
+		result.Activated = true
+		result.TurnsLeft = s.smokeScreenTurns
+	}
+
+	return result, nil
+}
+
+// GetAbilityInfo devuelve el estado actual de la habilidad del capitán.
+func (s *Session) GetAbilityInfo() AbilityInfo {
+	return s.playerCaptain.Ability
+}
+
+// GetCaptainProfile devuelve el perfil del capitán del jugador.
+func (s *Session) GetCaptainProfile() CaptainProfile {
+	return s.playerCaptain
+}
+
+// GetReport genera el informe de analítica al terminar la partida.
+func (s *Session) GetReport() AnalyticsReport {
+	return BuildReport(s.shotHistory, s.playerBoard.Size)
 }

@@ -3,85 +3,91 @@ import { useGameStore } from '../store/gameStore'
 import * as w from '../lib/wails'
 
 export function LanLobby() {
-  const mode    = useGameStore(s => s.mode)
-  const lanIP   = useGameStore(s => s.lanIP)
-  const reset   = useGameStore(s => s.reset)
+  const { lanIP, reset }          = useGameStore()
   const [connected, setConnected] = useState(false)
+  const [copied,    setCopied]    = useState(false)
 
-  // Escuchar cuando el cliente se conecta al host
   useEffect(() => {
     let unsub: (() => void) | undefined
-    try {
-      unsub = w.onLanConnected(() => setConnected(true))
-    } catch {}
+    try { unsub = w.onLanConnected(() => setConnected(true)) } catch {}
     return () => unsub?.()
   }, [])
 
-  // Si ya hay session (cliente conectó y viene la sesión LAN), 
-  // App.tsx redirigirá a Placement automáticamente.
-  // Este componente solo muestra la pantalla de espera.
-
-  const isHost = mode === 'lan_host'
+  const handleCopy = () => {
+    if (!lanIP) return
+    navigator.clipboard?.writeText(lanIP).catch(() => {})
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
 
   return (
     <div className="flex flex-col items-center justify-center h-full gap-8">
 
-      {isHost ? (
+      {!connected ? (
         <>
+          {/* Estado de espera */}
           <div className="text-center">
-            <p className="text-slate-500 text-xs uppercase tracking-[0.2em] mb-3">
-              {connected ? 'Oponente conectado' : 'Esperando oponente…'}
+            <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500 mb-4">
+              Esperando oponente en la red local
             </p>
-            <div className={`text-5xl font-black ${connected ? 'text-green-400' : 'text-slate-100 animate-pulse'}`}>
-              {connected ? '✓ CONECTADO' : '···'}
+            <div className="flex items-center justify-center gap-1.5">
+              {[0, 1, 2].map(i => (
+                <div key={i}
+                  style={{ animationDelay: `${i * 200}ms` }}
+                  className="w-2 h-2 rounded-full bg-cyan-500 animate-bounce"
+                />
+              ))}
             </div>
           </div>
 
-          {!connected && (
-            <div className="flex flex-col items-center gap-3 p-6 rounded-2xl border border-slate-700 bg-slate-900/60">
-              <p className="text-xs uppercase tracking-widest text-slate-500">
-                Comparte esta IP con tu oponente
+          {/* IP + broadcast info */}
+          <div className="p-6 rounded-2xl border border-slate-700 bg-slate-900/60 flex flex-col items-center gap-4">
+
+            {/* Autodescubrimiento activo */}
+            <div className="flex items-center gap-2 text-green-400 text-xs">
+              <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+              <span>Anunciando partida en la red local</span>
+            </div>
+
+            <div className="w-full h-px bg-slate-800" />
+
+            {/* IP para conexión manual */}
+            <div className="flex flex-col items-center gap-2">
+              <p className="text-[10px] uppercase tracking-[0.25em] text-slate-500">
+                IP para conexión manual
               </p>
               <div className="flex items-center gap-3">
-                <span className="text-3xl font-mono font-bold text-cyan-400 tracking-wider">
+                <span className="text-2xl font-mono font-bold text-slate-200 tracking-wider">
                   {lanIP ?? '···'}
                 </span>
-                <button
-                  onClick={() => lanIP && navigator.clipboard?.writeText(lanIP)}
-                  className="px-3 py-1.5 rounded-lg border border-slate-700 text-slate-400
-                             hover:border-slate-500 hover:text-slate-200 text-xs transition-colors"
-                >
-                  Copiar
+                <button onClick={handleCopy}
+                  className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+                    copied
+                      ? 'border-green-600 bg-green-950/50 text-green-400'
+                      : 'border-slate-600 text-slate-400 hover:border-slate-400 hover:text-slate-200'
+                  }`}>
+                  {copied ? '✓' : 'Copiar'}
                 </button>
               </div>
-              <p className="text-[10px] text-slate-700 font-mono">
-                Puerto: 7342
-              </p>
+              <p className="text-[10px] text-slate-700 font-mono">Puerto TCP: 7342</p>
             </div>
-          )}
+          </div>
 
-          {connected && (
-            <p className="text-slate-400 text-sm">
-              Ambos pasarán a la pantalla de colocación en un momento…
-            </p>
-          )}
+          <p className="text-slate-600 text-xs text-center max-w-xs">
+            Los jugadores en tu red verán tu partida automáticamente.
+            Si no aparece, pueden escribir la IP manualmente.
+          </p>
         </>
       ) : (
-        /* Cliente: mostrando que está conectando */
         <div className="text-center">
-          <p className="text-slate-500 text-xs uppercase tracking-[0.2em] mb-3">Conectando al host</p>
-          <div className="text-4xl font-black text-cyan-400 animate-pulse">···</div>
-          <p className="text-slate-600 text-sm mt-4">
-            Esperando que el host acepte la conexión
-          </p>
+          <div className="text-5xl mb-4">✅</div>
+          <p className="text-xl font-bold text-green-400 tracking-wider">Oponente conectado</p>
+          <p className="text-slate-500 text-sm mt-2">Preparando colocación de barcos…</p>
         </div>
       )}
 
-      <button
-        onClick={reset}
-        className="mt-4 px-6 py-2 rounded-lg border border-slate-700 text-slate-500
-                   hover:border-slate-500 hover:text-slate-300 text-sm transition-colors"
-      >
+      <button onClick={reset}
+        className="text-slate-600 hover:text-slate-400 text-sm transition-colors">
         ← Volver al menú
       </button>
     </div>
