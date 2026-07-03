@@ -314,19 +314,20 @@ func (a *App) LanSendChat(content string) {
 // ────────────────────────────────────────────────────────────────────
 
 // OnlineHostResult contiene toda la información que el frontend necesita
-// para mostrar el Room Code y el estado de UPnP.
+// para mostrar el Room Code y el estado del mapeo de puertos.
 type OnlineHostResult struct {
-	RoomCode    string `json:"roomCode"`
-	PublicIP    string `json:"publicIP"`
-	LocalIP     string `json:"localIP"`
-	UPnPSuccess bool   `json:"upnpSuccess"`
-	UPnPError   string `json:"upnpError,omitempty"`
+	RoomCode         string `json:"roomCode"`
+	PublicIP         string `json:"publicIP"`
+	LocalIP          string `json:"localIP"`
+	GatewayIP        string `json:"gatewayIP"`    // IP del router (para abrir panel de admin)
+	PortMappingReady bool   `json:"portMappingReady"` // true si UPnP o NAT-PMP abrieron el puerto
+	Method           string `json:"method"`        // "upnp" | "natpmp" | "manual"
+	MethodError      string `json:"methodError,omitempty"`
 }
 
-// HostOnlineGame abre el servidor TCP, intenta UPnP para abrir el puerto
-// en el router y devuelve el Room Code (7 chars Base36) para compartir.
+// HostOnlineGame abre el servidor TCP, intenta abrir el puerto automáticamente
+// (primero UPnP, luego NAT-PMP) y devuelve el Room Code de 7 caracteres.
 func (a *App) HostOnlineGame() (OnlineHostResult, error) {
-	// Limpiar sesión anterior
 	if a.lanMgr != nil {
 		a.lanMgr.Close()
 	}
@@ -339,33 +340,51 @@ func (a *App) HostOnlineGame() (OnlineHostResult, error) {
 	a.session = nil
 
 	localIP := network.LocalIP()
-	result := OnlineHostResult{LocalIP: localIP}
 
-	// ── Obtener IP pública ───────────────────────────────────────────
+	// Intentar derivar la IP del gateway (para las instrucciones manuales)
+	gatewayIP := deriveGateway(localIP)
+	result := OnlineHostResult{LocalIP: localIP, GatewayIP: gatewayIP}
 
-	// Primero intentar UPnP (más rápido y nos da la IP del router)
-	upnpResult := online.TryUPnP(localIP, online.Port, 6*time.Second)
+	// ── 1. UPnP ──────────────────────────────────────────────────────
+	upnpResult := online.TryUPnP(localIP, online.Port, 5*time.Second)
 	if upnpResult.Success {
 		result.PublicIP = upnpResult.ExternalIP
-		result.UPnPSuccess = true
+		result.PortMappingReady = true
+		result.Method = "upnp"
 	} else {
-		// UPnP falló: obtener IP pública por HTTP
-		if upnpResult.Err != nil {
-			result.UPnPError = upnpResult.Err.Error()
-		}
-		pubIP, err := online.GetPublicIP()
-		if err == nil {
-			result.PublicIP = pubIP
+		// ── 2. NAT-PMP ───────────────────────────────────────────────
+		natResult := online.TryNATPMP(online.Port, 3*time.Second)
+		if natResult.Success {
+			result.PublicIP = natResult.ExternalIP
+			result.PortMappingReady = true
+			result.Method = "natpmp"
 		} else {
-			// Último recurso: usar la IP local
-			result.PublicIP = localIP
+			// ── 3. Fallback: IP pública por HTTP ─────────────────────
+			result.Method = "manual"
+			errMsg := ""
+			if upnpResult.Err != nil {
+				errMsg = upnpResult.Err.Error()
+			}
+			if natResult.Err != nil && errMsg == "" {
+				errMsg = natResult.Err.Error()
+			}
+			result.MethodError = errMsg
+
+			pubIP, httpErr := online.GetPublicIP()
+			if httpErr == nil {
+				result.PublicIP = pubIP
+			} else {
+				result.PublicIP = localIP
+			}
 		}
 	}
 
-	// Si UPnP dio la IP pero no la IP pública, usar GetPublicIP
-	if upnpResult.Success && result.PublicIP == "" {
-		if pubIP, err := online.GetPublicIP(); err == nil {
-			result.PublicIP = pubIP
+	// Asegurarnos de tener IP pública aunque UPnP/NAT-PMP la hayan devuelto vacía
+	if result.PublicIP == "" {
+		if pub, err2 := online.GetPublicIP(); err2 == nil {
+			result.PublicIP = pub
+		} else {
+			result.PublicIP = localIP
 		}
 	}
 
@@ -399,6 +418,16 @@ func (a *App) HostOnlineGame() (OnlineHostResult, error) {
 	}()
 
 	return result, nil
+}
+
+// deriveGateway infiere la IP del gateway a partir de la IP local.
+// En la gran mayoría de redes domésticas el gateway es X.X.X.1.
+func deriveGateway(localIP string) string {
+	ip := net.ParseIP(localIP).To4()
+	if ip == nil {
+		return "192.168.1.1"
+	}
+	return fmt.Sprintf("%d.%d.%d.1", ip[0], ip[1], ip[2])
 }
 
 // JoinOnlineGame decodifica un Room Code y conecta al host.
