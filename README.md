@@ -1,8 +1,22 @@
-# 🗺️ NetNaval
+# NetNaval
 
-Plataforma híbrida de **Batalla Naval y Chat en Tiempo Real**, distribuida y multiplataforma, empaquetada como aplicación de escritorio nativa (Wails v2) y expandible a móviles.
+<p align="left">
+  <strong>Distributed Peer-to-Peer Naval Combat & Real-Time Network Chat Architecture</strong><br>
+  Engineered by <a href="https://github.com/iamhuitron"><strong>Ian Miguel Delgado Huitrón</strong></a> · Co-Founder at <a href="https://github.com/Xaol-Studio"><strong>@Xaol-Studio</strong></a>
+</p>
 
-## 🏗️ Stack
+<p align="left">
+  <a href="https://github.com/iamhuitron"><img src="https://img.shields.io/badge/Author-@iamhuitron-1e293b?style=flat-square&logo=github&logoColor=white" alt="Author" /></a>
+  <a href="https://github.com/Xaol-Studio"><img src="https://img.shields.io/badge/Studio-@Xaol--Studio-059669?style=flat-square&logo=github&logoColor=white" alt="Studio" /></a>
+  <img src="https://img.shields.io/badge/Backend-Go%20(Concurrency)-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go Backend" />
+  <img src="https://img.shields.io/badge/Desktop-Wails%20v2-DF1A5E?style=flat-square" alt="Wails v2" />
+  <img src="https://img.shields.io/badge/Frontend-React%2018%20%2B%20TypeScript-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-emerald?style=flat-square" alt="License" /></a>
+</p>
+
+> **Plataforma híbrida de Batalla Naval y Chat en Tiempo Real**, distribuida y multiplataforma, empaquetada como aplicación de escritorio nativa mediante Wails v2 (Go + React/TypeScript) con protocolo LAN TCP peer-to-peer y recuperación automática de estado de red.
+
+---
 
 | Capa | Tecnología |
 |---|---|
